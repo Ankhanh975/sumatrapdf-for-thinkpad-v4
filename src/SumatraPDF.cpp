@@ -4295,60 +4295,6 @@ static Annotation* GetAnnotionUnderCursor(WindowTab* tab, Annotation* annot) {
 }
 
 static bool FrameOnKeydown(MainWindow* win, WPARAM key, LPARAM lp) {
-        // Smooth scroll timer for arrow keys
-        static UINT_PTR arrowScrollTimer = 0;
-        static WPARAM lastArrowKey = 0;
-        const UINT ARROW_SCROLL_TIMER_ID = 0x2345;
-        const int ARROW_SCROLL_DELAY_MS = 12;
-
-        if (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT) {
-            lastArrowKey = key;
-            if (!arrowScrollTimer) {
-                arrowScrollTimer = SetTimer(win->hwndCanvas, ARROW_SCROLL_TIMER_ID, ARROW_SCROLL_DELAY_MS, nullptr);
-            }
-            // Immediate scroll for feedback
-            if (key == VK_UP) {
-                if (dm) dm->ScrollYBy(-DpiScale(win->hwndCanvas, 16), true);
-                SendMessageW(win->hwndCanvas, WM_VSCROLL, SB_LINEUP, 0);
-            } else if (key == VK_DOWN) {
-                if (dm) dm->ScrollYBy(DpiScale(win->hwndCanvas, 16), true);
-                SendMessageW(win->hwndCanvas, WM_VSCROLL, SB_LINEDOWN, 0);
-            } else if (key == VK_LEFT) {
-                if (dm) dm->ScrollXBy(-DpiScale(win->hwndCanvas, 8));
-                SendMessageW(win->hwndCanvas, WM_HSCROLL, SB_LINELEFT, 0);
-            } else if (key == VK_RIGHT) {
-                if (dm) dm->ScrollXBy(DpiScale(win->hwndCanvas, 8));
-                SendMessageW(win->hwndCanvas, WM_HSCROLL, SB_LINERIGHT, 0);
-            }
-            return true;
-        }
-        static WPARAM lastArrowKey = 0;
-        const UINT ARROW_SCROLL_TIMER_ID = 0x2345;
-        if (msg == ARROW_SCROLL_TIMER_ID) {
-            MainWindow* win = FindMainWindowByHwnd(hwnd);
-            DisplayModel* dm = win ? win->AsFixed() : nullptr;
-            if (!win) return 0;
-            if (lastArrowKey == VK_UP) {
-                if (dm) dm->ScrollYBy(-DpiScale(hwnd, 4), true);
-                SendMessageW(hwnd, WM_VSCROLL, SB_LINEUP, 0);
-            } else if (lastArrowKey == VK_DOWN) {
-                if (dm) dm->ScrollYBy(DpiScale(hwnd, 4), true);
-                SendMessageW(hwnd, WM_VSCROLL, SB_LINEDOWN, 0);
-            } else if (lastArrowKey == VK_LEFT) {
-                if (dm) dm->ScrollXBy(-DpiScale(hwnd, 2));
-                SendMessageW(hwnd, WM_HSCROLL, SB_LINELEFT, 0);
-            } else if (lastArrowKey == VK_RIGHT) {
-                if (dm) dm->ScrollXBy(DpiScale(hwnd, 2));
-                SendMessageW(hwnd, WM_HSCROLL, SB_LINERIGHT, 0);
-            }
-            return 0;
-        }
-            case WM_KEYUP:
-                if (wp == VK_UP || wp == VK_DOWN || wp == VK_LEFT || wp == VK_RIGHT) {
-                    KillTimer(hwnd, ARROW_SCROLL_TIMER_ID);
-                    lastArrowKey = 0;
-                }
-                break;
     // TODO: how does this interact with new accelerators?
     if (PM_BLACK_SCREEN == win->presentation || PM_WHITE_SCREEN == win->presentation) {
         // black/white screen is disabled on any unmodified key press in FrameOnChar
