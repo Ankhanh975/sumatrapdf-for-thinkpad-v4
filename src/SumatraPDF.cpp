@@ -5624,6 +5624,7 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
 
         case CmdScrollDown:
         case CmdScrollUp: {
+            // Arrow keys for scrolling, in continuous view scrolls by line in the pdf, otherwise scrolls by page
             if (!win->IsDocLoaded()) {
                 return 0;
             }

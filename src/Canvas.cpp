@@ -1,3 +1,5 @@
+#include <map>
+#include <vector>
 /* Copyright 2022 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
@@ -108,7 +110,8 @@ void UpdateDeltaPerLine() {
     if (ulScrollLines == (ULONG)-1) {
         gDeltaPerLine = -1;
     } else if (ulScrollLines != 0) {
-        gDeltaPerLine = WHEEL_DELTA / ulScrollLines / 8;
+        gDeltaPerLine = WHEEL_DELTA / ulScrollLines / 16; 
+        // 16 is an empirically determined value that corresponds to my touchpad resolution
     }
     // logf("SPI_GETWHEELSCROLLLINES: ulScrollLines=%d, gDeltaPerLine=%d\n", (int)ulScrollLines, gDeltaPerLine);
 }
@@ -170,10 +173,12 @@ static void OnVScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
     }
 
     if (lp == 0) {
-        lp = 16; // default line height in case we can't get it from the system
+        lp = 42; // default line height in case we can't get it from the system
     }
     // Original logic for other display modes
-    int lineHeight = DpiScale(win->hwndCanvas, 16) / 16 * ((int) lp);
+    float lineHeightF = DpiScale(win->hwndCanvas, 16) * ((float) lp) / 32;
+    int lineHeight = min(1, (int)lineHeightF);
+
     bool isFitPage = (kZoomFitPage == ctrl->GetZoomVirtual());
     if (!IsContinuous(ctrl->GetDisplayMode()) && isFitPage) {
         lineHeight = 1;
@@ -228,7 +233,7 @@ static void OnVScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
     }
 }
 
-static void OnHScroll(MainWindow* win, WPARAM wp) {
+static void OnHScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
     ReportIf(!win->AsFixed());
 
     SCROLLINFO si{};
@@ -237,6 +242,9 @@ static void OnHScroll(MainWindow* win, WPARAM wp) {
     GetScrollInfo(win->hwndCanvas, SB_HORZ, &si);
 
     int currPos = si.nPos;
+    if (lp == 0) {
+        lp = 16; // default line width in case we can't get it from the system
+    }
     USHORT msg = LOWORD(wp);
     switch (msg) {
         case SB_LEFT:
@@ -246,10 +254,10 @@ static void OnHScroll(MainWindow* win, WPARAM wp) {
             si.nPos = si.nMax;
             break;
         case SB_LINELEFT:
-            si.nPos -= DpiScale(win->hwndCanvas, 16) / 12;
+            si.nPos -= DpiScale(win->hwndCanvas, 16) * lp / 128;
             break;
         case SB_LINERIGHT:
-            si.nPos += DpiScale(win->hwndCanvas, 16) / 12;
+            si.nPos += DpiScale(win->hwndCanvas, 16) * lp / 128;
             break;
         case SB_PAGELEFT:
             si.nPos -= si.nPage;
@@ -1547,6 +1555,7 @@ static void ZoomByMouseWheel(MainWindow* win, WPARAM wp) {
 
     if (IsFirstWheelMsg(lastWheelMsgTime)) {
         initialZoomVritual = win->ctrl->GetZoomVirtual(true);
+        // Do not reset accumDelta here to allow smooth, continuous zooming
         accumDelta = 0;
     }
 
@@ -1558,7 +1567,7 @@ static void ZoomByMouseWheel(MainWindow* win, WPARAM wp) {
     } else if (delta == -WHEEL_DELTA) {
         delta = -10;
     }
-
+    // 
     accumDelta += delta;
     // calc zooming factor as centered around 1.f (1 is no change, > 1 is zoom in, < 1 is zoom out)
     // from delta values that are centered around 0
@@ -1747,7 +1756,9 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
             // logf("  line down\n");
             didScrollByLine = true;
         }
-        SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, count);
+        if (count > 0) {
+            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, count);
+        }
     } else {
         WPARAM scrollWp = hScroll ? SB_LINELEFT : SB_LINEUP;
         int count = 0;
@@ -1757,14 +1768,18 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
             // logf("  line up\n");
             didScrollByLine = true;
         }
-        SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, count);
+        if (count > 0) {
+            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, count);
+        }
     }
     // Immediately scroll the full remainder for high-frequency touchpad events
     if (gSmoothScrollRemainder != 0) {
         int steps = gSmoothScrollRemainder / gDeltaPerLine;
         int leftover = gSmoothScrollRemainder % gDeltaPerLine;
-        WPARAM scrollWp = (gSmoothScrollRemainder > 0) ? (hScroll ? SB_LINEUP : SB_LINEUP) : (hScroll ? SB_LINEDOWN : SB_LINEDOWN);
-        SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, abs(steps)); 
+        WPARAM scrollWp = (gSmoothScrollRemainder > 0) ? (hScroll ? SB_LINELEFT : SB_LINEUP) : (hScroll ? SB_LINERIGHT : SB_LINEDOWN);
+        if (steps != 0) {
+            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, abs(steps)); 
+        }
         win->wheelAccumDelta = leftover;
         gSmoothScrollRemainder = leftover;
     }
@@ -1988,7 +2003,12 @@ static LRESULT OnGesture(MainWindow* win, UINT msg, WPARAM wp, LPARAM lp) {
 
 static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // DbgLogMsg("canvas:", hwnd, msg, wp, lp);
-
+    // if (msg != WM_NCHITTEST) {
+        // LARGE_INTEGER t = TimeGet();
+        // TempStr msgName = WinMsgNameTemp(msg);
+        // logf("WndProcCanvasFixedPageUI: time: %lld, msg: %d (%s), wp: 0x%p, lp: 0x%p\n", t.QuadPart, (int)msg, msgName, (void*)wp, (void*)lp);
+    // }
+    
     if (!IsMainWindowValid(win)) {
         bool hwndValid = IsWindow(hwnd);
         logf("WndProcCanvasFixedPageUI: MainWindow win: 0x%p is no longer valid, msg: %d, hwnd valid: %d\n", win,
@@ -1997,15 +2017,40 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
         return 0;
     }
 
+    // Multi-pointer tracking for pinch zoom
+    static std::map<UINT32, POINTER_TOUCH_INFO> activePointers;
+
     // Handle high-resolution touchpad scrolling via WM_POINTER (Windows 8+)
-    if (msg == WM_POINTERUPDATE) {
+    if (msg == WM_POINTERDOWN || msg == WM_POINTERUPDATE || msg == WM_POINTERUP || msg == WM_POINTERCAPTURECHANGED) {
         UINT32 pointerId = GET_POINTERID_WPARAM(wp);
         POINTER_INFO pi;
         if (GetPointerInfo(pointerId, &pi)) {
-            if (pi.pointerType == PT_TOUCHPAD) {
-                // For future: handle touchpad scrolling here if possible
-                // Currently, Windows does not provide direct scroll deltas in POINTER_INFO
-                // High-res scrolling is usually delivered via WM_MOUSEWHEEL with smaller deltas
+            if (pi.pointerType == PT_TOUCH || pi.pointerType == PT_TOUCHPAD) {
+                POINTER_TOUCH_INFO pti{};
+                pti.pointerInfo = pi;
+                if (GetPointerTouchInfo(pointerId, &pti)) {
+                    if (msg == WM_POINTERDOWN) {
+                        activePointers[pointerId] = pti;
+                        logf("POINTERDOWN id=%u x=%ld y=%ld active=%zu\n", pointerId, pti.pointerInfo.ptPixelLocation.x, pti.pointerInfo.ptPixelLocation.y, activePointers.size());
+                    } else if (msg == WM_POINTERUPDATE) {
+                        activePointers[pointerId] = pti;
+                        logf("POINTERUPDATE id=%u x=%ld y=%ld active=%zu\n", pointerId, pti.pointerInfo.ptPixelLocation.x, pti.pointerInfo.ptPixelLocation.y, activePointers.size());
+                        // Pinch detection: if 2 pointers, calculate distance
+                        if (activePointers.size() == 2) {
+                            auto it = activePointers.begin();
+                            const auto& p1 = it->second;
+                            ++it;
+                            const auto& p2 = it->second;
+                            double dx = (double)p1.pointerInfo.ptPixelLocation.x - (double)p2.pointerInfo.ptPixelLocation.x;
+                            double dy = (double)p1.pointerInfo.ptPixelLocation.y - (double)p2.pointerInfo.ptPixelLocation.y;
+                            double dist = sqrt(dx*dx + dy*dy);
+                            logf("PINCH: id1=%u id2=%u dist=%.2f\n", p1.pointerInfo.pointerId, p2.pointerInfo.pointerId, dist);
+                        }
+                    } else if (msg == WM_POINTERUP || msg == WM_POINTERCAPTURECHANGED) {
+                        activePointers.erase(pointerId);
+                        logf("POINTERUP/CAPTURECHANGED id=%u active=%zu\n", pointerId, activePointers.size());
+                    }
+                }
             }
         }
         // For now, fall through to default
@@ -2068,7 +2113,7 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
             return 0;
 
         case WM_HSCROLL:
-            OnHScroll(win, wp);
+            OnHScroll(win, wp, lp);
             return 0;
 
         case WM_MOUSEWHEEL:
@@ -2347,6 +2392,13 @@ static void OnDropFiles(MainWindow* win, HDROP hDrop, bool dragFinish) {
 
 LRESULT CALLBACK WndProcCanvas(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // messages that don't require win
+
+    // DbgLogMsg("canvas:", hwnd, msg, wp, lp);
+    // if (msg != WM_NCHITTEST) {
+    //     LARGE_INTEGER t = TimeGet();
+    //     TempStr msgName = WinMsgNameTemp(msg);
+    //     logf("WndProcCanvas: time: %lld, msg: %d (%s), wp: 0x%p, lp: 0x%p\n", t.QuadPart, (int)msg, msgName, (void*)wp, (void*)lp);
+    // }
 
     MainWindow* win = FindMainWindowByHwnd(hwnd);
     switch (msg) {
