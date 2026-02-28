@@ -177,7 +177,7 @@ static void OnVScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
     }
     // Original logic for other display modes
     float lineHeightF = DpiScale(win->hwndCanvas, 16) * ((float) lp) / 32;
-    int lineHeight = min(1, (int)lineHeightF);
+    int lineHeight = std::max(1, (int)lineHeightF);
 
     bool isFitPage = (kZoomFitPage == ctrl->GetZoomVirtual());
     if (!IsContinuous(ctrl->GetDisplayMode()) && isFitPage) {

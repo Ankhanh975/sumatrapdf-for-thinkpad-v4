@@ -1,3 +1,4 @@
+Changed bookmark tab shortcut from F12 to Ctrl+B in Accelerators.cpp
 create build.ts to be executed with bun that runs msbuild command to build
 ────
 in build.ts remove ./out/dbg64/SumatraPDF.exe before running msbuild

@@ -81,6 +81,7 @@
     V(VK_F10, "F10")                 \
     V(VK_F11, "F11")                 \
     V(VK_F12, "F12")                 \
+    V('B', "Ctrl+B")                 \
     V(VK_F13, "F13")                 \
     V(VK_F14, "F14")                 \
     V(VK_F15, "F15")                 \
@@ -221,7 +222,6 @@ ACCEL gBuiltInAccelerators[] = {
     //{FSHIFT | FCONTROL | FVIRTKEY, 'S', CmdCreateShortcutToFile},
 
     {FCONTROL | FVIRTKEY, 'A', CmdSelectAll},
-    {FCONTROL | FVIRTKEY, 'B', CmdFavoriteAdd},
     {FCONTROL | FVIRTKEY, 'C', CmdCopySelection},
     {FCONTROL | FVIRTKEY, VK_INSERT, CmdCopySelection},
     {FCONTROL | FVIRTKEY, 'D', CmdProperties},
@@ -267,8 +267,7 @@ ACCEL gBuiltInAccelerators[] = {
     {FSHIFT | FVIRTKEY, VK_F11, CmdTogglePresentationMode},
     {FSHIFT | FCONTROL | FVIRTKEY, 'L', CmdToggleFullscreen},
     {FVIRTKEY, VK_F11, CmdToggleFullscreen},
-    {FVIRTKEY, VK_F12, CmdToggleBookmarks},
-    {FSHIFT | FVIRTKEY, VK_F12, CmdToggleBookmarks},
+    {FCONTROL | FVIRTKEY, 'B', CmdToggleBookmarks},
     {FSHIFT | FCONTROL | FVIRTKEY, VK_SUBTRACT, CmdRotateLeft},
     {FSHIFT | FCONTROL | FVIRTKEY, VK_OEM_MINUS, CmdRotateLeft},
     {FSHIFT | FCONTROL | FVIRTKEY, 'T', CmdReopenLastClosedFile},

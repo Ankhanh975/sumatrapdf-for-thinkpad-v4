@@ -1,0 +1,4969 @@
+diff --git a/ext/libdjvu/DataPool.cpp b/ext/libdjvu/DataPool.cpp
+index 5a621a549..ff49afe3b 100644
+--- a/ext/libdjvu/DataPool.cpp
++++ b/ext/libdjvu/DataPool.cpp
+@@ -1175,8 +1175,7 @@ DataPool::get_data(void * buffer, int offset, int sz, int level)
+        if (sz<0)
+          sz=0;
+        
+-       GP<OpenFiles_File> f=fstream;
+-       if (!f)
++       GP<OpenFiles_File> f;
+          {
+            GCriticalSectionLock lock(&class_stream_lock);
+            f=fstream;
+@@ -1185,8 +1184,10 @@ DataPool::get_data(void * buffer, int offset, int sz, int level)
+                fstream=f=OpenFiles::get()->request_stream(furl, this);
+              }
+          }
++       if (!f)
++         return 0;
+        GCriticalSectionLock lock2(&(f->stream_lock));
+-       f->stream->seek(start+offset, SEEK_SET); 
++       f->stream->seek(start+offset, SEEK_SET);
+        return f->stream->readall(buffer, sz);
+      } 
+    else
+@@ -1398,6 +1399,8 @@ DataPool::load_file(void)
+       {
+         fstream=f=OpenFiles::get()->request_stream(furl, this);
+       }
++      if (!f)
++        return;
+       {  // Scope to de-allocate lock2 before stream gets released
+          GCriticalSectionLock lock2(&(f->stream_lock));
+ 
+diff --git a/src/Accelerators.cpp b/src/Accelerators.cpp
+index 6a4a8ab34..b50ecc5fe 100644
+--- a/src/Accelerators.cpp
++++ b/src/Accelerators.cpp
+@@ -234,23 +234,23 @@ ACCEL gBuiltInAccelerators[] = {
+     {FCONTROL | FVIRTKEY, 'P', CmdPrint},
+     {FCONTROL | FVIRTKEY, 'Q', CmdExit},
+     {FCONTROL | FVIRTKEY, 'Y', CmdZoomCustom},
+-    {FALT | FVIRTKEY, '0', CmdZoomFitPage},
+-    {FALT | FVIRTKEY, VK_NUMPAD0, CmdZoomFitPage},
+-    {FALT | FVIRTKEY, '1', CmdZoomActualSize},
+-    {FALT | FVIRTKEY, VK_NUMPAD1, CmdZoomActualSize},
+-    {FALT | FVIRTKEY, '2', CmdZoomFitWidth},
+-    {FALT | FVIRTKEY, VK_NUMPAD2, CmdZoomFitWidth},
+-    {FALT | FVIRTKEY, '3', CmdZoomFitContent},
+-    {FALT | FVIRTKEY, VK_NUMPAD3, CmdZoomFitContent},
++    {FCONTROL | FVIRTKEY, '0', CmdZoomFitPage},
++    {FCONTROL | FVIRTKEY, VK_NUMPAD0, CmdZoomFitPage},
++    {FCONTROL | FVIRTKEY, '1', CmdZoomActualSize},
++    {FCONTROL | FVIRTKEY, VK_NUMPAD1, CmdZoomActualSize},
++    {FCONTROL | FVIRTKEY, '2', CmdZoomFitWidth},
++    {FCONTROL | FVIRTKEY, VK_NUMPAD2, CmdZoomFitWidth},
++    {FCONTROL | FVIRTKEY, '3', CmdZoomFitContent},
++    {FCONTROL | FVIRTKEY, VK_NUMPAD3, CmdZoomFitContent},
+     {FCONTROL | FVIRTKEY, VK_ADD, CmdZoomIn},
+     {FCONTROL | FVIRTKEY, VK_SUBTRACT, CmdZoomOut},
+     {FCONTROL | FVIRTKEY, VK_OEM_MINUS, CmdZoomOut},
+-    {FALT | FVIRTKEY, '6', CmdSinglePageView},
+-    {FALT | FVIRTKEY, VK_NUMPAD6, CmdSinglePageView},
+-    {FALT | FVIRTKEY, '7', CmdFacingView},
+-    {FALT | FVIRTKEY, VK_NUMPAD7, CmdFacingView},
+-    {FALT | FVIRTKEY, '8', CmdBookView},
+-    {FALT | FVIRTKEY, VK_NUMPAD8, CmdBookView},
++    {FCONTROL | FVIRTKEY, '6', CmdSinglePageView},
++    {FCONTROL | FVIRTKEY, VK_NUMPAD6, CmdSinglePageView},
++    {FCONTROL | FVIRTKEY, '7', CmdFacingView},
++    {FCONTROL | FVIRTKEY, VK_NUMPAD7, CmdFacingView},
++    {FCONTROL | FVIRTKEY, '8', CmdBookView},
++    {FCONTROL | FVIRTKEY, VK_NUMPAD8, CmdBookView},
+     {FSHIFT | FCONTROL | FVIRTKEY, VK_ADD, CmdRotateRight},
+     {FCONTROL | FVIRTKEY, VK_OEM_PLUS, CmdZoomIn},
+     {FSHIFT | FCONTROL | FVIRTKEY, VK_OEM_PLUS, CmdRotateRight},
+@@ -276,8 +276,8 @@ ACCEL gBuiltInAccelerators[] = {
+     {FCONTROL | FVIRTKEY, VK_PRIOR, CmdPrevTab},
+     {FCONTROL | FSHIFT | FVIRTKEY, VK_NEXT, CmdMoveTabRight},
+     {FCONTROL | FSHIFT | FVIRTKEY, VK_PRIOR, CmdMoveTabLeft},
+-    {FCONTROL | FVIRTKEY, VK_TAB, CmdNextTab},
+-    {FCONTROL | FSHIFT | FVIRTKEY, VK_TAB, CmdPrevTab},
++    {FCONTROL | FVIRTKEY, VK_TAB, CmdNextTabSmart},
++    {FCONTROL | FSHIFT | FVIRTKEY, VK_TAB, CmdPrevTabSmart},
+     {FVIRTKEY, VK_F1, CmdHelpOpenManual},
+ 
+     // need 2 entries for 'a' and 'Shift + a'
+diff --git a/src/Annotation.cpp b/src/Annotation.cpp
+index 4982a8490..191389846 100644
+--- a/src/Annotation.cpp
++++ b/src/Annotation.cpp
+@@ -178,31 +178,34 @@ void SetRect(Annotation* annot, RectF r) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+     bool failed = false;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    fz_rect rc = ToFzRect(r);
+-    fz_try(ctx) {
+-        if (annot->type == AnnotationType::Line) {
+-            // line annotation doesn't have a rect but a line position
+-            // TODO: not sure this is the right place for this
+-            fz_point p1 = {rc.x0, rc.y0}, p2 = {rc.x1, rc.y1};
+-            pdf_set_annot_line(ctx, a, p1, p2);
+-        } else {
+-            pdf_set_annot_rect(ctx, a, rc);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        fz_rect rc = ToFzRect(r);
++        fz_try(ctx) {
++            if (annot->type == AnnotationType::Line) {
++                // line annotation doesn't have a rect but a line position
++                // TODO: not sure this is the right place for this
++                fz_point p1 = {rc.x0, rc.y0}, p2 = {rc.x1, rc.y1};
++                pdf_set_annot_line(ctx, a, p1, p2);
++            } else {
++                pdf_set_annot_rect(ctx, a, rc);
++            }
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            // can happen for non-moveable annotations
++            failed = true;
++            logf("SetRect(): pdf_set_annot_rect() or pdf_update_annot() failed\n");
+         }
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        // can happen for non-moveable annotations
+-        failed = true;
+-        logf("SetRect(): pdf_set_annot_rect() or pdf_update_annot() failed\n");
+     }
+     ReportIf(failed);
+     if (failed) {
+         return;
+     }
+     annot->bounds = r;
++    // must be called outside ctxAccess to avoid deadlock with pagesAccess
+     MarkNotificationAsModified(e, annot);
+ }
+ 
+@@ -252,20 +255,22 @@ static bool IsValidQuadding(int i) {
+ bool SetQuadding(Annotation* annot, int newQuadding) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    ReportIf(!IsValidQuadding(newQuadding));
+-    bool didChange = Quadding(annot) != newQuadding;
+-    if (!didChange) {
+-        return false;
+-    }
+-    fz_try(ctx) {
+-        pdf_set_annot_quadding(ctx, a, newQuadding);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        logf("SetQuadding(): pdf_set_annot_quadding or pdf_update_annot() failed\n");
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        ReportIf(!IsValidQuadding(newQuadding));
++        bool didChange = Quadding(annot) != newQuadding;
++        if (!didChange) {
++            return false;
++        }
++        fz_try(ctx) {
++            pdf_set_annot_quadding(ctx, a, newQuadding);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            logf("SetQuadding(): pdf_set_annot_quadding or pdf_update_annot() failed\n");
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+     return true;
+@@ -274,28 +279,30 @@ bool SetQuadding(Annotation* annot, int newQuadding) {
+ void SetQuadPointsAsRect(Annotation* annot, const Vec<RectF>& rects) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    fz_quad quads[512];
+-    int n = rects.Size();
+-    if (n == 0) {
+-        return;
+-    }
+-    constexpr int kMaxQuads = (int)dimof(quads);
+-    for (int i = 0; i < n && i < kMaxQuads; i++) {
+-        RectF rect = rects[i];
+-        fz_rect r = ToFzRect(rect);
+-        fz_quad q = fz_quad_from_rect(r);
+-        quads[i] = q;
+-    }
+-    fz_try(ctx) {
+-        pdf_clear_annot_quad_points(ctx, a);
+-        pdf_set_annot_quad_points(ctx, a, n, quads);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        logf("SetQuadPointsAsRect(): mupdf calls failed\n");
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        fz_quad quads[512];
++        int n = rects.Size();
++        if (n == 0) {
++            return;
++        }
++        constexpr int kMaxQuads = (int)dimof(quads);
++        for (int i = 0; i < n && i < kMaxQuads; i++) {
++            RectF rect = rects[i];
++            fz_rect r = ToFzRect(rect);
++            fz_quad q = fz_quad_from_rect(r);
++            quads[i] = q;
++        }
++        fz_try(ctx) {
++            pdf_clear_annot_quad_points(ctx, a);
++            pdf_set_annot_quad_points(ctx, a, n, quads);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            logf("SetQuadPointsAsRect(): mupdf calls failed\n");
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+@@ -354,14 +361,16 @@ bool SetContents(Annotation* annot, const char* sv) {
+     if (str::Eq(sv, currValue)) {
+         return false;
+     }
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    fz_try(ctx) {
+-        pdf_set_annot_contents(ctx, a, sv);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        fz_try(ctx) {
++            pdf_set_annot_contents(ctx, a, sv);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+     return true;
+@@ -374,17 +383,19 @@ void DeleteAnnotation(Annotation* annot) {
+     }
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+     bool failed = false;
+-    pdf_page* page = nullptr;
+-    fz_try(ctx) {
+-        page = pdf_annot_page(ctx, a);
+-        pdf_delete_annot(ctx, page, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        failed = true;
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        pdf_page* page = nullptr;
++        fz_try(ctx) {
++            page = pdf_annot_page(ctx, a);
++            pdf_delete_annot(ctx, page, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            failed = true;
++        }
+     }
+     if (failed) {
+         logf("failed to delete annotation on page %d\n", annot->pageNo);
+@@ -471,14 +482,16 @@ const char* IconName(Annotation* annot) {
+ void SetIconName(Annotation* annot, const char* iconName) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    fz_try(ctx) {
+-        pdf_set_annot_icon_name(ctx, a, iconName);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        fz_try(ctx) {
++            pdf_set_annot_icon_name(ctx, a, iconName);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     // TODO: only if the value changed
+     MarkNotificationAsModified(e, annot);
+@@ -487,14 +500,16 @@ void SetIconName(Annotation* annot, const char* iconName) {
+ void SetLineEndStyles(Annotation* annot, int end) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    fz_try(ctx) {
+-        pdf_set_annot_line_end_style(ctx, a, (pdf_line_ending)end);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        fz_try(ctx) {
++            pdf_set_annot_line_end_style(ctx, a, (pdf_line_ending)end);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+@@ -502,14 +517,16 @@ void SetLineEndStyles(Annotation* annot, int end) {
+ void SetLineStartStyles(Annotation* annot, int start) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    fz_try(ctx) {
+-        pdf_set_annot_line_start_style(ctx, a, (pdf_line_ending)start);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        fz_try(ctx) {
++            pdf_set_annot_line_start_style(ctx, a, (pdf_line_ending)start);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+@@ -585,55 +602,57 @@ PdfColor GetColor(Annotation* annot) {
+ bool SetColor(Annotation* annot, PdfColor c) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    bool didChange = false;
+-    float color[4]{};
+-    int n = -1;
+-    float oldOpacity = 0;
+-    fz_try(ctx) {
+-        pdf_annot_color(ctx, a, &n, color);
+-        oldOpacity = pdf_annot_opacity(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        n = -1;
+-    }
+-    if (n == -1) {
+-        return false;
+-    }
+-    float newColor[3];
+-    PdfColorToFloat(c, newColor);
+-    float opacity = GetOpacityFloat(c);
+-    didChange = (n != 3);
+-    if (!didChange) {
+-        for (int i = 0; i < n; i++) {
+-            if (color[i] != newColor[i]) {
+-                didChange = true;
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        bool didChange = false;
++        float color[4]{};
++        int n = -1;
++        float oldOpacity = 0;
++        fz_try(ctx) {
++            pdf_annot_color(ctx, a, &n, color);
++            oldOpacity = pdf_annot_opacity(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            n = -1;
++        }
++        if (n == -1) {
++            return false;
++        }
++        float newColor[3];
++        PdfColorToFloat(c, newColor);
++        float opacity = GetOpacityFloat(c);
++        didChange = (n != 3);
++        if (!didChange) {
++            for (int i = 0; i < n; i++) {
++                if (color[i] != newColor[i]) {
++                    didChange = true;
++                }
+             }
+         }
+-    }
+-    if (opacity != oldOpacity) {
+-        didChange = true;
+-    }
+-    if (!didChange) {
+-        return false;
+-    }
+-    fz_try(ctx) {
+-        if (c == 0) {
+-            pdf_set_annot_color(ctx, a, 0, newColor);
+-            // TODO: set opacity to 1?
+-            // pdf_set_annot_opacity(ctx, a, 1.f);
+-        } else {
+-            pdf_set_annot_color(ctx, a, 3, newColor);
+-            if (oldOpacity != opacity) {
+-                pdf_set_annot_opacity(ctx, a, opacity);
++        if (opacity != oldOpacity) {
++            didChange = true;
++        }
++        if (!didChange) {
++            return false;
++        }
++        fz_try(ctx) {
++            if (c == 0) {
++                pdf_set_annot_color(ctx, a, 0, newColor);
++                // TODO: set opacity to 1?
++                // pdf_set_annot_opacity(ctx, a, 1.f);
++            } else {
++                pdf_set_annot_color(ctx, a, 3, newColor);
++                if (oldOpacity != opacity) {
++                    pdf_set_annot_opacity(ctx, a, opacity);
++                }
+             }
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
+         }
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+     }
+     MarkNotificationAsModified(e, annot);
+     return true;
+@@ -663,38 +682,40 @@ PdfColor InteriorColor(Annotation* annot) {
+ bool SetInteriorColor(Annotation* annot, PdfColor c) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    bool didChange = false;
+-    float color[4]{};
+-    int n = -1;
+-    fz_try(ctx) {
+-        pdf_annot_interior_color(ctx, a, &n, color);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        n = -1;
+-    }
+-    float newColor[3]{};
+-    PdfColorToFloat(c, newColor);
+-    int newN = (c == 0) ? 0 : 3;
+-    didChange = (n != newN);
+-    if (!didChange) {
+-        for (int i = 0; i < n; i++) {
+-            if (color[i] != newColor[i]) {
+-                didChange = true;
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        bool didChange = false;
++        float color[4]{};
++        int n = -1;
++        fz_try(ctx) {
++            pdf_annot_interior_color(ctx, a, &n, color);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            n = -1;
++        }
++        float newColor[3]{};
++        PdfColorToFloat(c, newColor);
++        int newN = (c == 0) ? 0 : 3;
++        didChange = (n != newN);
++        if (!didChange) {
++            for (int i = 0; i < n; i++) {
++                if (color[i] != newColor[i]) {
++                    didChange = true;
++                }
+             }
+         }
+-    }
+-    if (!didChange) {
+-        return false;
+-    }
+-    fz_try(ctx) {
+-        pdf_set_annot_interior_color(ctx, a, newN, newColor);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++        if (!didChange) {
++            return false;
++        }
++        fz_try(ctx) {
++            pdf_set_annot_interior_color(ctx, a, newN, newColor);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+     return true;
+@@ -721,19 +742,21 @@ const char* DefaultAppearanceTextFont(Annotation* annot) {
+ void SetDefaultAppearanceTextFont(Annotation* annot, const char* sv) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    const char* fontName = nullptr;
+-    float sizeF{0.0};
+-    int n = 0;
+-    float textColor[4]{};
+-    fz_try(ctx) {
+-        pdf_annot_default_appearance(ctx, a, &fontName, &sizeF, &n, textColor);
+-        pdf_set_annot_default_appearance(ctx, a, sv, sizeF, n, textColor);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        const char* fontName = nullptr;
++        float sizeF{0.0};
++        int n = 0;
++        float textColor[4]{};
++        fz_try(ctx) {
++            pdf_annot_default_appearance(ctx, a, &fontName, &sizeF, &n, textColor);
++            pdf_set_annot_default_appearance(ctx, a, sv, sizeF, n, textColor);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+@@ -759,19 +782,21 @@ int DefaultAppearanceTextSize(Annotation* annot) {
+ void SetDefaultAppearanceTextSize(Annotation* annot, int textSize) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    const char* fontName = nullptr;
+-    float sizeF{0.0};
+-    int n = 0;
+-    float textColor[4]{};
+-    fz_try(ctx) {
+-        pdf_annot_default_appearance(ctx, a, &fontName, &sizeF, &n, textColor);
+-        pdf_set_annot_default_appearance(ctx, a, fontName, (float)textSize, n, textColor);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        const char* fontName = nullptr;
++        float sizeF{0.0};
++        int n = 0;
++        float textColor[4]{};
++        fz_try(ctx) {
++            pdf_annot_default_appearance(ctx, a, &fontName, &sizeF, &n, textColor);
++            pdf_set_annot_default_appearance(ctx, a, fontName, (float)textSize, n, textColor);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+@@ -798,20 +823,22 @@ PdfColor DefaultAppearanceTextColor(Annotation* annot) {
+ void SetDefaultAppearanceTextColor(Annotation* annot, PdfColor col) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    const char* fontName = nullptr;
+-    float sizeF{0.0};
+-    int n = 0;
+-    float textColor[4]{}; // must be at least 4
+-    fz_try(ctx) {
+-        pdf_annot_default_appearance(ctx, a, &fontName, &sizeF, &n, textColor);
+-        PdfColorToFloat(col, textColor);
+-        pdf_set_annot_default_appearance(ctx, a, fontName, sizeF, 3, textColor);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        const char* fontName = nullptr;
++        float sizeF{0.0};
++        int n = 0;
++        float textColor[4]{}; // must be at least 4
++        fz_try(ctx) {
++            pdf_annot_default_appearance(ctx, a, &fontName, &sizeF, &n, textColor);
++            PdfColorToFloat(col, textColor);
++            pdf_set_annot_default_appearance(ctx, a, fontName, sizeF, 3, textColor);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+@@ -858,15 +885,17 @@ void SetBorderWidth(Annotation* annot, int newWidth) {
+     }
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    fz_try(ctx) {
+-        pdf_set_annot_border_width(ctx, a, (float)newWidth);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        logf("SetBorderWidth: SetBorderWidth() or pdf_update_annot() failed\n");
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        fz_try(ctx) {
++            pdf_set_annot_border_width(ctx, a, (float)newWidth);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            logf("SetBorderWidth: SetBorderWidth() or pdf_update_annot() failed\n");
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+@@ -891,19 +920,21 @@ int Opacity(Annotation* annot) {
+ void SetOpacity(Annotation* annot, int newOpacity) {
+     EngineMupdf* e = annot->engine;
+     auto a = annot->pdfannot;
+-    auto ctx = e->Ctx();
+-    ScopedCritSec cs(e->ctxAccess);
+-    ReportIf(newOpacity < 0 || newOpacity > 255);
+-    newOpacity = std::clamp(newOpacity, 0, 255);
+-    float fopacity = (float)newOpacity / 255.f;
++    {
++        auto ctx = e->Ctx();
++        ScopedCritSec cs(e->ctxAccess);
++        ReportIf(newOpacity < 0 || newOpacity > 255);
++        newOpacity = std::clamp(newOpacity, 0, 255);
++        float fopacity = (float)newOpacity / 255.f;
+ 
+-    fz_try(ctx) {
+-        pdf_set_annot_opacity(ctx, a, fopacity);
+-        pdf_update_annot(ctx, a);
+-    }
+-    fz_catch(ctx) {
+-        fz_report_error(ctx);
+-        logf("SetOpacity: pdf_set_annot_opacity() or pdf_update_annot() failed\n");
++        fz_try(ctx) {
++            pdf_set_annot_opacity(ctx, a, fopacity);
++            pdf_update_annot(ctx, a);
++        }
++        fz_catch(ctx) {
++            fz_report_error(ctx);
++            logf("SetOpacity: pdf_set_annot_opacity() or pdf_update_annot() failed\n");
++        }
+     }
+     MarkNotificationAsModified(e, annot);
+ }
+diff --git a/src/AppSettings.cpp b/src/AppSettings.cpp
+index 6b4c6a490..9f7beb3a9 100644
+--- a/src/AppSettings.cpp
++++ b/src/AppSettings.cpp
+@@ -341,7 +341,7 @@ static void RememberSessionState() {
+                     }
+                 }
+                 logf("RememberSessionState: didn't find state for file '%s'\n", fp ? fp : "(none)");
+-                ReportIf(!didFind);
++                // ReportIf(!didFind);
+                 continue;
+             }
+             FileState* fs = NewFileState(fp);
+diff --git a/src/AppTools.cpp b/src/AppTools.cpp
+index 3098f3791..bf45a5bd5 100644
+--- a/src/AppTools.cpp
++++ b/src/AppTools.cpp
+@@ -104,7 +104,6 @@ bool IsDllBuild() {
+     return resSrc != nullptr;
+ }
+ 
+-// TODO: leaks
+ static char* gAppDataDir = nullptr;
+ 
+ void DeleteAppTools() {
+@@ -122,19 +121,27 @@ TempStr GetAppDataDirTemp() {
+     if (gAppDataDir) {
+         return gAppDataDir;
+     }
+-
+-    TempStr dir;
+-    if (IsRunningInPortableMode()) {
++    bool isPortable = IsRunningInPortableMode();
++    TempStr dir = nullptr;
++    if (isPortable) {
+         dir = GetSelfExeDirTemp();
+-    } else {
++        // sometimes people put executable in directory like c:\windows
++        // and we can't write to it. in that case we'll fall back to %APPDATA%
++        if (!dir::HasWriteAccess(dir)) {
++            logf("GetAppDataDirTemp: no write access to '%s'\n", dir);
++            dir = nullptr;
++        }
++    }
++    if (!dir) {
+         dir = GetSpecialFolderTemp(CSIDL_LOCAL_APPDATA, true);
+         if (!dir) {
++            LogLastError();
+             ReportIf(true);
+             dir = GetTempDirTemp(); // shouldn't happen, last chance thing
+         }
+         dir = path::JoinTemp(dir, kAppName);
+     }
+-    logf("GetAppDataDirTemp(): '%s'\n", dir);
++    logf("GetAppDataDirTemp(): '%s'%s\n", dir, isPortable ? " (portable)" : "(installed)");
+     SetAppDataDir(dir);
+     return gAppDataDir;
+ }
+diff --git a/src/Canvas.cpp b/src/Canvas.cpp
+index 75723f43b..a8cccd66a 100644
+--- a/src/Canvas.cpp
++++ b/src/Canvas.cpp
+@@ -1,5 +1,3 @@
+-#include <map>
+-#include <vector>
+ /* Copyright 2022 the SumatraPDF project authors (see AUTHORS file).
+    License: GPLv3 */
+ 
+@@ -83,15 +81,7 @@ constexpr int kResizeHandleSize = 8;
+ // Smooth scrolling factor. This is a value between 0 and 1.
+ // Each step, we scroll the needed delta times this factor.
+ // Therefore, a higher factor makes smooth scrolling faster.
+-static const double gSmoothScrollingFactor = 0.7;
+-
+-// Timer ID for smooth scroll animation
+-#define SMOOTHSCROLL_TIMER_ID_2 0x1234
+-// Delay in ms between smooth scroll animation steps
+-#define SMOOTHSCROLL_DELAY_IN_MS_2 12
+-
+-// Accumulated sub-line delta for smooth scrolling
+-static int gSmoothScrollRemainder = 0;
++static const double gSmoothScrollingFactor = 0.2;
+ 
+ // these can be global, as the mouse wheel can't affect more than one window at once
+ static int gDeltaPerLine = 0;
+@@ -110,15 +100,14 @@ void UpdateDeltaPerLine() {
+     if (ulScrollLines == (ULONG)-1) {
+         gDeltaPerLine = -1;
+     } else if (ulScrollLines != 0) {
+-        gDeltaPerLine = WHEEL_DELTA / ulScrollLines / 16; 
+-        // 16 is an empirically determined value that corresponds to my touchpad resolution
++        gDeltaPerLine = WHEEL_DELTA / ulScrollLines;
+     }
+     // logf("SPI_GETWHEELSCROLLLINES: ulScrollLines=%d, gDeltaPerLine=%d\n", (int)ulScrollLines, gDeltaPerLine);
+ }
+ 
+ ///// methods needed for FixedPageUI canvases with document loaded /////
+ 
+-static void OnVScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
++static void OnVScroll(MainWindow* win, WPARAM wp) {
+     ReportIf(!win->AsFixed());
+ 
+     SCROLLINFO si{};
+@@ -172,13 +161,8 @@ static void OnVScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
+         return;
+     }
+ 
+-    if (lp == 0) {
+-        lp = 42; // default line height in case we can't get it from the system
+-    }
+     // Original logic for other display modes
+-    float lineHeightF = DpiScale(win->hwndCanvas, 16) * ((float) lp) / 32;
+-    int lineHeight = min(1, (int)lineHeightF);
+-
++    int lineHeight = DpiScale(win->hwndCanvas, 16);
+     bool isFitPage = (kZoomFitPage == ctrl->GetZoomVirtual());
+     if (!IsContinuous(ctrl->GetDisplayMode()) && isFitPage) {
+         lineHeight = 1;
+@@ -233,7 +217,7 @@ static void OnVScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
+     }
+ }
+ 
+-static void OnHScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
++static void OnHScroll(MainWindow* win, WPARAM wp) {
+     ReportIf(!win->AsFixed());
+ 
+     SCROLLINFO si{};
+@@ -242,9 +226,6 @@ static void OnHScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
+     GetScrollInfo(win->hwndCanvas, SB_HORZ, &si);
+ 
+     int currPos = si.nPos;
+-    if (lp == 0) {
+-        lp = 16; // default line width in case we can't get it from the system
+-    }
+     USHORT msg = LOWORD(wp);
+     switch (msg) {
+         case SB_LEFT:
+@@ -254,10 +235,10 @@ static void OnHScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
+             si.nPos = si.nMax;
+             break;
+         case SB_LINELEFT:
+-            si.nPos -= DpiScale(win->hwndCanvas, 16) * lp / 128;
++            si.nPos -= DpiScale(win->hwndCanvas, 16);
+             break;
+         case SB_LINERIGHT:
+-            si.nPos += DpiScale(win->hwndCanvas, 16) * lp / 128;
++            si.nPos += DpiScale(win->hwndCanvas, 16);
+             break;
+         case SB_PAGELEFT:
+             si.nPos -= si.nPage;
+@@ -456,7 +437,8 @@ static RectF CalculateResizedRect(MainWindow* win, int x, int y);
+ 
+ static void OnMouseMove(MainWindow* win, int x, int y, WPARAM) {
+     DisplayModel* dm = win->AsFixed();
+-    ReportIf(!dm);
++    // ReportIf(!dm); // can happen if reload fails, we delete DisplayModel
++    if (!dm) return;
+ 
+     if (win->InPresentation()) {
+         if (PM_BLACK_SCREEN == win->presentation || PM_WHITE_SCREEN == win->presentation) {
+@@ -520,9 +502,12 @@ static void OnMouseMove(MainWindow* win, int x, int y, WPARAM) {
+                         NotificationCreateArgs args;
+                         args.hwndParent = win->hwndCanvas;
+                         args.groupId = kNotifAnnotation;
+-                        args.timeoutMs = -1;
++                        args.timeoutMs = 3000;
++                        args.delayInMs = 1000;
++                        args.noClose = true;
+                         TempStr name = annot ? AnnotationReadableNameTemp(annot->type) : (TempStr) "none";
+-                        args.msg = str::FormatTemp(_TRN("%s annotation. Ctrl+click to edit."), name);
++                        const char* fmt = _TRA("%s annotation. Ctrl+click to edit.");
++                        args.msg = str::FormatTemp(fmt, name);
+                         ShowNotification(args);
+                     }
+                 }
+@@ -718,16 +703,27 @@ static void OnMouseLeftButtonDown(MainWindow* win, int x, int y, WPARAM key) {
+         win->mouseAction = MouseAction::None;
+         return;
+     }
+-    ReportIf(!win->AsFixed());
+ 
+     HwndSetFocus(win->hwndFrame);
+-
+     DisplayModel* dm = win->AsFixed();
++    ReportIf(!dm);
+     Point pt{x, y};
+ 
+     WindowTab* tab = win->CurrentTab();
+     Annotation* annot = dm->GetAnnotationAtPos(pt, tab->selectedAnnotation);
+-    bool isMoveableAnnot = annot && (annot == tab->selectedAnnotation) && AnnotationCanBeMoved(annot->type);
++    bool isMoveableAnnot = annot && AnnotationCanBeMoved(annot->type);
++    if (isMoveableAnnot) {
++        if (annot == tab->selectedAnnotation) {
++            // dragging the selected annotation. do nothing here, just start dragging in mouse move
++        } else if (tab->editAnnotsWindow || tab->selectedAnnotation) {
++            // clicking on a different annotation while edit annotations window is open. or
++            // other annotation is selected, select the clicked annotation and start dragging yet
++            SetSelectedAnnotation(tab, annot);
++        } else {
++            isMoveableAnnot = false;
++        }
++    }
++
+     // Check if we're clicking on a resize handle of the selected annotation
+     // must check selectedAnnotation directly (not annot) because resize handles
+     // extend beyond annotation bounds and GetAnnotationAtPos() won't find them
+@@ -827,7 +823,11 @@ static void OnMouseLeftButtonUp(MainWindow* win, int x, int y, WPARAM key) {
+     }
+ 
+     if (IsCtrlPressed() && win->annotationUnderCursor) {
+-        ShowEditAnnotationsWindow(tab);
++        ShowEditAnnotationsWindow(tab, win->annotationUnderCursor);
++        return;
++    }
++
++    if (win->annotationUnderCursor && (tab->selectedAnnotation || tab->editAnnotsWindow)) {
+         SetSelectedAnnotation(tab, win->annotationUnderCursor);
+         return;
+     }
+@@ -906,16 +906,6 @@ static void OnMouseLeftButtonDblClk(MainWindow* win, int x, int y, WPARAM key) {
+ 
+     int elementPageNo = -1;
+     IPageElement* pageEl = dm->GetElementAtPos(mousePos, &elementPageNo);
+-
+-#if 0
+-    WindowTab* tab = win->CurrentTab();
+-    if (IsCtrlPressed() && win->annotationUnderCursor) {
+-        ShowEditAnnotationsWindow(tab);
+-        SetSelectedAnnotation(tab, win->annotationUnderCursor);
+-        return;
+-    }
+-#endif
+-
+     if (isOverText) {
+         int pageNo = dm->GetPageNoByPoint(mousePos);
+         if (win->ctrl->ValidPageNo(pageNo)) {
+@@ -1140,6 +1130,8 @@ static void GetGradientColor(COLORREF a, COLORREF b, float perc, TRIVERTEX* tv)
+ }
+ 
+ // Draw a border around selected annotation
++static bool gDrawOldStyleAnnotationRect = false;
++
+ NO_INLINE static void PaintCurrentEditAnnotationMark(WindowTab* tab, HDC hdc, DisplayModel* dm) {
+     if (!tab) {
+         return;
+@@ -1162,17 +1154,21 @@ NO_INLINE static void PaintCurrentEditAnnotationMark(WindowTab* tab, HDC hdc, Di
+         tab->didScrollToSelectedAnnotation = true;
+     }
+     rect.Inflate(4, 4);
+-    // Gdiplus::Color col = GdiRgbFromCOLORREF(gCurrentTheme->window.backgroundColor);
+-    Gdiplus::Color col = GdiRgbFromCOLORREF(0xff3333); // blue
+-    // TODO: maybe make the rectangle a bit bigger and draw line
+-    // using a pattern, using a brush pen
+-    Gdiplus::Color colHatch2((Gdiplus::ARGB)Gdiplus::Color::Yellow);
+-
+-    Gdiplus::HatchBrush br(Gdiplus::HatchStyleCross, colHatch2, col);
+-    // Gdiplus::Pen pen(col, 4);
+-    Gdiplus::Pen pen(&br, 4);
++
+     Gdiplus::Graphics gs(hdc);
+-    gs.DrawRectangle(&pen, rect.x, rect.y, rect.dx, rect.dy);
++
++    if (gDrawOldStyleAnnotationRect) {
++        Gdiplus::Color col = GdiRgbFromCOLORREF(0xff3333); // blue
++        Gdiplus::Color colHatch2((Gdiplus::ARGB)Gdiplus::Color::Yellow);
++        Gdiplus::HatchBrush br(Gdiplus::HatchStyleCross, colHatch2, col);
++        Gdiplus::Pen pen(&br, 4);
++        gs.DrawRectangle(&pen, rect.x, rect.y, rect.dx, rect.dy);
++    } else {
++        Gdiplus::Color gray(180, 128, 128, 128);
++        Gdiplus::Pen pen(gray, 2);
++        pen.SetDashStyle(Gdiplus::DashStyleDot);
++        gs.DrawRectangle(&pen, rect.x, rect.y, rect.dx, rect.dy);
++    }
+ 
+     if (!canResize) {
+         return;
+@@ -1234,9 +1230,7 @@ static bool DrawDocument(MainWindow* win, HDC hdc, RECT* rcArea) {
+         AutoDeleteBrush brush = CreateSolidBrush(WIN_COL_BLACK);
+         FillRect(hdc, rcArea, brush);
+     } else if (0 == nGCols) {
+-        // auto col = ThemeMainWindowBackgroundColor();
+-        COLORREF col = 0xA0A0A0; // light gray
+-
++        auto col = ThemeMainWindowBackgroundColor();
+         AutoDeleteBrush brush = CreateSolidBrush(col);
+         FillRect(hdc, rcArea, brush);
+     } else {
+@@ -1434,7 +1428,8 @@ static LRESULT OnSetCursorMouseNone(MainWindow* win, HWND hwnd) {
+         return TRUE;
+     }
+ 
+-    Annotation* selected = win->CurrentTab()->selectedAnnotation;
++    WindowTab* tab = win->CurrentTab();
++    Annotation* selected = tab->selectedAnnotation;
+ 
+     // Check if hovering over resize handle of selected annotation
+     if (selected && AnnotationCanBeResized(selected->type)) {
+@@ -1446,7 +1441,7 @@ static LRESULT OnSetCursorMouseNone(MainWindow* win, HWND hwnd) {
+     }
+ 
+     Annotation* annot = dm->GetAnnotationAtPos(pt, selected);
+-    if (annot && (annot == selected) && AnnotationCanBeMoved(annot->type)) {
++    if (annot && (selected || tab->editAnnotsWindow)) {
+         SetCursorCached(IDC_HAND);
+         return TRUE;
+     }
+@@ -1555,7 +1550,6 @@ static void ZoomByMouseWheel(MainWindow* win, WPARAM wp) {
+ 
+     if (IsFirstWheelMsg(lastWheelMsgTime)) {
+         initialZoomVritual = win->ctrl->GetZoomVirtual(true);
+-        // Do not reset accumDelta here to allow smooth, continuous zooming
+         accumDelta = 0;
+     }
+ 
+@@ -1567,7 +1561,7 @@ static void ZoomByMouseWheel(MainWindow* win, WPARAM wp) {
+     } else if (delta == -WHEEL_DELTA) {
+         delta = -10;
+     }
+-    // 
++
+     accumDelta += delta;
+     // calc zooming factor as centered around 1.f (1 is no change, > 1 is zoom in, < 1 is zoom out)
+     // from delta values that are centered around 0
+@@ -1597,6 +1591,8 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
+         return res;
+     }
+ 
++    DisplayModel* dm = win->AsFixed();
++
+     // Note: not all mouse drivers correctly report the Ctrl key's state
+     // isCtrl is also set if this is pinch gestore from touchpad (on thinkpad x1 at least).
+     bool isCtrl = (LOWORD(wp) & MK_CONTROL) || IsCtrlPressed();
+@@ -1629,7 +1625,6 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
+ 
+     // For SinglePage mode with content requiring scrolling, use continuous scrolling behavior
+     if (isSinglePageMode && vScroll) {
+-        DisplayModel* dm = win->AsFixed();
+         if (dm && dm->NeedVScroll()) {
+             // Content is larger than viewport, use continuous scrolling
+             // Fall through to the default scrolling behavior below
+@@ -1658,7 +1653,6 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
+         float zoomVirt = win->ctrl->GetZoomVirtual();
+         // in fit content we might show vert scrollbar but we want to flip the whole page on mouse wheel
+         bool flipPage = zoomVirt == kZoomFitContent;
+-        DisplayModel* dm = win->AsFixed();
+         if (dm && !dm->NeedVScroll()) {
+             // if page/pages fully fit in window, flip the whole page
+             // logf("  flipping page because !dm->NeedVScroll()\n");
+@@ -1688,35 +1682,38 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
+     }
+ 
+     // For SinglePage mode with zoomed content, use continuous scrolling with page transitions
+-    if (isSinglePageMode && vScroll && win->AsFixed()) {
+-        DisplayModel* dm = win->AsFixed();
+-        if (dm && dm->NeedVScroll()) {
++    if (isSinglePageMode && vScroll && dm) {
++        if (dm->NeedVScroll()) {
+             // Use continuous scrolling that handles page transitions at boundaries
+             SCROLLINFO si{};
+             si.cbSize = sizeof(si);
+             si.fMask = SIF_PAGE;
+             GetScrollInfo(win->hwndCanvas, hScroll ? SB_HORZ : SB_VERT, &si);
+             int scrollBy = -MulDiv(si.nPage, delta * 30, WHEEL_DELTA);
++            // on sensitive touchpads delta can be very small
++            if (scrollBy == 0) return 0;
+             if (hScroll) {
+-                win->AsFixed()->ScrollXBy(scrollBy);
++                dm->ScrollXBy(scrollBy);
+             } else {
+-                win->AsFixed()->ScrollYBy(scrollBy, true);
++                dm->ScrollYBy(scrollBy, true);
+             }
+             return 0;
+         }
+     }
+ 
+-    if (gDeltaPerLine < 0 && win->AsFixed()) {
++    if (gDeltaPerLine < 0 && dm) {
+         // scroll by (fraction of a) page
+         SCROLLINFO si{};
+         si.cbSize = sizeof(si);
+         si.fMask = SIF_PAGE;
+         GetScrollInfo(win->hwndCanvas, hScroll ? SB_HORZ : SB_VERT, &si);
+         int scrollBy = -MulDiv(si.nPage, delta, WHEEL_DELTA);
++        // on sensitive touchpads delta can be very small
++        if (scrollBy == 0) return 0;
+         if (hScroll) {
+-            win->AsFixed()->ScrollXBy(scrollBy);
++            dm->ScrollXBy(scrollBy);
+         } else {
+-            win->AsFixed()->ScrollYBy(scrollBy, true);
++            dm->ScrollYBy(scrollBy, true);
+         }
+         return 0;
+     }
+@@ -1742,46 +1739,26 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
+     }
+ 
+     win->wheelAccumDelta += delta;
+-    gSmoothScrollRemainder += delta;
+     int prevScrollPos = GetScrollPos(win->hwndCanvas, SB_VERT);
+ 
+     UINT scrollMsg = hScroll ? WM_HSCROLL : WM_VSCROLL;
+     bool didScrollByLine = false;
+     if (win->wheelAccumDelta < 0) {
+         WPARAM scrollWp = hScroll ? SB_LINERIGHT : SB_LINEDOWN;
+-        int count = 0;
+         while (win->wheelAccumDelta <= -gDeltaPerLine) {
+-            count++;
++            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, 0);
+             win->wheelAccumDelta += gDeltaPerLine;
+             // logf("  line down\n");
+             didScrollByLine = true;
+         }
+-        if (count > 0) {
+-            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, count);
+-        }
+     } else {
+         WPARAM scrollWp = hScroll ? SB_LINELEFT : SB_LINEUP;
+-        int count = 0;
+         while (win->wheelAccumDelta >= gDeltaPerLine) {
+-            count++;
++            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, 0);
+             win->wheelAccumDelta -= gDeltaPerLine;
+             // logf("  line up\n");
+             didScrollByLine = true;
+         }
+-        if (count > 0) {
+-            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, count);
+-        }
+-    }
+-    // Immediately scroll the full remainder for high-frequency touchpad events
+-    if (gSmoothScrollRemainder != 0) {
+-        int steps = gSmoothScrollRemainder / gDeltaPerLine;
+-        int leftover = gSmoothScrollRemainder % gDeltaPerLine;
+-        WPARAM scrollWp = (gSmoothScrollRemainder > 0) ? (hScroll ? SB_LINELEFT : SB_LINEUP) : (hScroll ? SB_LINERIGHT : SB_LINEDOWN);
+-        if (steps != 0) {
+-            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, abs(steps)); 
+-        }
+-        win->wheelAccumDelta = leftover;
+-        gSmoothScrollRemainder = leftover;
+     }
+     // in non-continuous mode flip page if necessary
+     if (!vScroll || !isCont) {
+@@ -2003,12 +1980,7 @@ static LRESULT OnGesture(MainWindow* win, UINT msg, WPARAM wp, LPARAM lp) {
+ 
+ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+     // DbgLogMsg("canvas:", hwnd, msg, wp, lp);
+-    // if (msg != WM_NCHITTEST) {
+-        // LARGE_INTEGER t = TimeGet();
+-        // TempStr msgName = WinMsgNameTemp(msg);
+-        // logf("WndProcCanvasFixedPageUI: time: %lld, msg: %d (%s), wp: 0x%p, lp: 0x%p\n", t.QuadPart, (int)msg, msgName, (void*)wp, (void*)lp);
+-    // }
+-    
++
+     if (!IsMainWindowValid(win)) {
+         bool hwndValid = IsWindow(hwnd);
+         logf("WndProcCanvasFixedPageUI: MainWindow win: 0x%p is no longer valid, msg: %d, hwnd valid: %d\n", win,
+@@ -2017,55 +1989,9 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
+         return 0;
+     }
+ 
+-    // Multi-pointer tracking for pinch zoom
+-    static std::map<UINT32, POINTER_TOUCH_INFO> activePointers;
+-
+-    // Handle high-resolution touchpad scrolling via WM_POINTER (Windows 8+)
+-    if (msg == WM_POINTERDOWN || msg == WM_POINTERUPDATE || msg == WM_POINTERUP || msg == WM_POINTERCAPTURECHANGED) {
+-        UINT32 pointerId = GET_POINTERID_WPARAM(wp);
+-        POINTER_INFO pi;
+-        if (GetPointerInfo(pointerId, &pi)) {
+-            if (pi.pointerType == PT_TOUCH || pi.pointerType == PT_TOUCHPAD) {
+-                POINTER_TOUCH_INFO pti{};
+-                pti.pointerInfo = pi;
+-                if (GetPointerTouchInfo(pointerId, &pti)) {
+-                    if (msg == WM_POINTERDOWN) {
+-                        activePointers[pointerId] = pti;
+-                        logf("POINTERDOWN id=%u x=%ld y=%ld active=%zu\n", pointerId, pti.pointerInfo.ptPixelLocation.x, pti.pointerInfo.ptPixelLocation.y, activePointers.size());
+-                    } else if (msg == WM_POINTERUPDATE) {
+-                        activePointers[pointerId] = pti;
+-                        logf("POINTERUPDATE id=%u x=%ld y=%ld active=%zu\n", pointerId, pti.pointerInfo.ptPixelLocation.x, pti.pointerInfo.ptPixelLocation.y, activePointers.size());
+-                        // Pinch detection: if 2 pointers, calculate distance
+-                        if (activePointers.size() == 2) {
+-                            auto it = activePointers.begin();
+-                            const auto& p1 = it->second;
+-                            ++it;
+-                            const auto& p2 = it->second;
+-                            double dx = (double)p1.pointerInfo.ptPixelLocation.x - (double)p2.pointerInfo.ptPixelLocation.x;
+-                            double dy = (double)p1.pointerInfo.ptPixelLocation.y - (double)p2.pointerInfo.ptPixelLocation.y;
+-                            double dist = sqrt(dx*dx + dy*dy);
+-                            logf("PINCH: id1=%u id2=%u dist=%.2f\n", p1.pointerInfo.pointerId, p2.pointerInfo.pointerId, dist);
+-                        }
+-                    } else if (msg == WM_POINTERUP || msg == WM_POINTERCAPTURECHANGED) {
+-                        activePointers.erase(pointerId);
+-                        logf("POINTERUP/CAPTURECHANGED id=%u active=%zu\n", pointerId, activePointers.size());
+-                    }
+-                }
+-            }
+-        }
+-        // For now, fall through to default
+-    }
+-
+-    // Handle high-resolution wheel events (Windows 8.1+)
+-    if (msg == 0x02E3 /* WM_MOUSEWHEEL (high-res, Windows 8.1+) */ || msg == 0x02E4 /* WM_MOUSEHWHEEL */) {
+-        // These are not always sent, but if they are, handle like WM_MOUSEWHEEL
+-        return CanvasOnMouseWheel(win, msg, wp, lp);
+-    }
+-
+     int x = GET_X_LPARAM(lp);
+     int y = GET_Y_LPARAM(lp);
+     switch (msg) {
+-        // SMOOTHSCROLL_TIMER_ID no longer needed: all remainder is handled immediately
+         case WM_PAINT:
+             OnPaintDocument(win);
+             return 0;
+@@ -2087,7 +2013,7 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
+             return 0;
+ 
+         case WM_MBUTTONDOWN:
+-            SetTimer(hwnd, SMOOTHSCROLL_TIMER_ID_2, SMOOTHSCROLL_DELAY_IN_MS_2, nullptr);
++            SetTimer(hwnd, SMOOTHSCROLL_TIMER_ID, SMOOTHSCROLL_DELAY_IN_MS, nullptr);
+             // TODO: Create window that shows location of initial click for reference
+             OnMouseMiddleButtonDown(win, x, y, wp);
+             return 0;
+@@ -2109,11 +2035,11 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
+             return 0;
+ 
+         case WM_VSCROLL:
+-            OnVScroll(win, wp, lp);
++            OnVScroll(win, wp);
+             return 0;
+ 
+         case WM_HSCROLL:
+-            OnHScroll(win, wp, lp);
++            OnHScroll(win, wp);
+             return 0;
+ 
+         case WM_MOUSEWHEEL:
+@@ -2393,13 +2319,6 @@ static void OnDropFiles(MainWindow* win, HDROP hDrop, bool dragFinish) {
+ LRESULT CALLBACK WndProcCanvas(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+     // messages that don't require win
+ 
+-    // DbgLogMsg("canvas:", hwnd, msg, wp, lp);
+-    // if (msg != WM_NCHITTEST) {
+-    //     LARGE_INTEGER t = TimeGet();
+-    //     TempStr msgName = WinMsgNameTemp(msg);
+-    //     logf("WndProcCanvas: time: %lld, msg: %d (%s), wp: 0x%p, lp: 0x%p\n", t.QuadPart, (int)msg, msgName, (void*)wp, (void*)lp);
+-    // }
+-
+     MainWindow* win = FindMainWindowByHwnd(hwnd);
+     switch (msg) {
+         case WM_DROPFILES:
+diff --git a/src/CommandPalette.cpp b/src/CommandPalette.cpp
+index a3b1a6be1..94023e784 100644
+--- a/src/CommandPalette.cpp
++++ b/src/CommandPalette.cpp
+@@ -33,6 +33,7 @@
+ #include "FileHistory.h"
+ #include "DarkModeSubclass.h"
+ #include "Notifications.h"
++#include "Translations.h"
+ 
+ #include "utils/Log.h"
+ 
+@@ -522,7 +523,15 @@ void CommandPaletteWnd::CollectStrings(MainWindow* mainWin) {
+     for (int i = 0; i < nTabs; i++) {
+         WindowTab* t = mainWin->GetTab(i);
+         if (t->IsAboutTab()) {
+-            ReportIf(i > 0);
++            if (i > 0) {
++                logf("CommandPaletteWnd::CollectStrings: unexpected about tab at idx: %d out of %d\n", i, nTabs);
++                for (int j = 0; j < nTabs; j++) {
++                    if (!t->IsAboutTab()) {
++                        logf("i: %d path: %s\n", j, t->filePath ? t->filePath : "");
++                    }
++                }
++                ReportIf(i > 0);
++            }
+             nFirstDocTab = 1;
+             continue;
+         }
+@@ -574,7 +583,7 @@ void CommandPaletteWnd::CollectStrings(MainWindow* mainWin) {
+             ItemDataCP data;
+             data.tab = tab;
+             if (tab->IsAboutTab()) {
+-                tabs.Append("Home", data);
++                tabs.Append(_TRA("Home"), data);
+                 continue;
+             }
+             auto name = path::GetBaseNameTemp(tab->filePath);
+@@ -604,7 +613,8 @@ void CommandPaletteWnd::CollectStrings(MainWindow* mainWin) {
+             ReportIf(str::Leni(name) == 0);
+             ItemDataCP data;
+             data.cmdId = (i32)cmdId;
+-            auto nameUpdated = UpdateCommandNameTemp(mainWin, cmdId, (TempStr)name);
++            auto nameTranslated = trans::GetTranslation(name);
++            auto nameUpdated = UpdateCommandNameTemp(mainWin, cmdId, (TempStr)nameTranslated);
+             tempCommands.Append(nameUpdated, data);
+         }
+     }
+@@ -675,7 +685,9 @@ static void ScheduleDelete() {
+     if (!gCommandPaletteWnd) {
+         return;
+     }
+-    HighlightTab(gCommandPaletteWnd->win, nullptr);
++    if (IsMainWindowValid(gCommandPaletteWnd->win)) {
++        HighlightTab(gCommandPaletteWnd->win, nullptr);
++    }
+     auto fn = MkFunc0Void(SafeDeleteCommandPaletteWnd);
+     uitask::Post(fn, "SafeDeleteCommandPaletteWnd");
+ }
+@@ -1225,28 +1237,28 @@ bool CommandPaletteWnd::Create(MainWindow* win, const char* prefix, int smartTab
+         hbox->alignCross = CrossAxisAlign::CrossCenter;
+         auto pad = Insets{0, 8, 0, 8};
+         {
+-            auto c = CreateStatic(hwnd, font, "# File History");
++            auto c = CreateStatic(hwnd, font, _TRA("# File History"));
+             c->SetColors(colTxt, colBg);
+             c->onClick = MkFunc0Method<CommandPaletteWnd, &CommandPaletteWnd::SwitchToFileHistory>(this);
+             auto p = new Padding(c, pad);
+             hbox->AddChild(p);
+         }
+         {
+-            auto c = CreateStatic(hwnd, font, "> Commands");
++            auto c = CreateStatic(hwnd, font, _TRA("> Commands"));
+             c->SetColors(colTxt, colBg);
+             c->onClick = MkFunc0Method<CommandPaletteWnd, &CommandPaletteWnd::SwitchToCommands>(this);
+             auto p = new Padding(c, pad);
+             hbox->AddChild(p);
+         }
+         {
+-            auto c = CreateStatic(hwnd, font, "@ Tabs");
++            auto c = CreateStatic(hwnd, font, _TRA("@ Tabs"));
+             c->SetColors(colTxt, colBg);
+             c->onClick = MkFunc0Method<CommandPaletteWnd, &CommandPaletteWnd::SwitchToTabs>(this);
+             auto p = new Padding(c, pad);
+             hbox->AddChild(p);
+         }
+         {
+-            auto c = CreateStatic(hwnd, font, ": Everything");
++            auto c = CreateStatic(hwnd, font, _TRA(": Everything"));
+             c->SetColors(colTxt, colBg);
+             c->onClick = MkFunc0Method<CommandPaletteWnd, &CommandPaletteWnd::SwitchToTabs>(this);
+             auto p = new Padding(c, pad);
+diff --git a/src/Commands.cpp b/src/Commands.cpp
+index f16876c75..ab5422ea3 100644
+--- a/src/Commands.cpp
++++ b/src/Commands.cpp
+@@ -1,16 +1,17 @@
+-/* Copyright 2022 the SumatraPDF project authors (see AUTHORS file).
+-   License: Simplified BSD (see COPYING.BSD) */
+-
+-#include "utils/BaseUtil.h"
+-
+-#include "Commands.h"
+-#include "Settings.h"
+-#include "GlobalPrefs.h"
+-#include "DisplayMode.h"
+-
+-#include "utils/Log.h"
+-
+-// @gen-start cmd-c
++/* Copyright 2022 the SumatraPDF project authors (see AUTHORS file).
++   License: Simplified BSD (see COPYING.BSD) */
++
++#include "utils/BaseUtil.h"
++
++#include "Commands.h"
++#include "Settings.h"
++#include "GlobalPrefs.h"
++#include "DisplayMode.h"
++#include "Notifications.h"
++
++#include "utils/Log.h"
++
++// @gen-start cmd-c
+ // clang-format off
+ static SeqStrings gCommandNames =
+     "CmdOpenFile\0" "CmdClose\0" "CmdCloseCurrentDocument\0"
+@@ -209,544 +210,546 @@ SeqStrings gCommandDescriptions =
+     "Debug: Corrupt Memory\0" "Debug: Crash Me\0" "Debug: Download Symbols\0"
+     "Debug: Test App\0" "Debug: Show Notification\0" "Debug: Start Stress Test\0"
+     "Debug: Toggle Predictive Rendering\0" "Debug: Toggle Rtl\0" "Toggle Anti-Alias Rendering\0"
+-    "Do nothing\0" "\0";
+-// clang-format on
+-// @gen-end cmd-c
+-
+-struct ArgSpec {
+-    int cmdId;
+-    const char* name;
+-    CommandArg::Type type;
+-};
+-
+-// arguments for the same command should follow each other
+-// first argument is default and can be specified without a name
+-static const ArgSpec argSpecs[] = {
+-    {CmdSelectionHandler, kCmdArgURL, CommandArg::Type::String}, // default
+-    {CmdSelectionHandler, kCmdArgExe, CommandArg::Type::String},
+-
+-    {CmdExec, kCmdArgExe, CommandArg::Type::String}, // default
+-    {CmdExec, kCmdArgFilter, CommandArg::Type::String},
+-
+-    // and all CmdCreateAnnot* commands
+-    {CmdCreateAnnotText, kCmdArgColor, CommandArg::Type::Color}, // default
+-    {CmdCreateAnnotText, kCmdArgBgColor, CommandArg::Type::Color},
+-    {CmdCreateAnnotText, kCmdArgOpacity, CommandArg::Type::Int},
+-    {CmdCreateAnnotText, kCmdArgOpenEdit, CommandArg::Type::Bool},
+-    {CmdCreateAnnotText, kCmdArgCopyToClipboard, CommandArg::Type::Bool},
+-    {CmdCreateAnnotText, kCmdArgSetContent, CommandArg::Type::Bool},
+-    {CmdCreateAnnotText, kCmdArgTextSize, CommandArg::Type::Int},
+-    {CmdCreateAnnotText, kCmdArgBorderWidth, CommandArg::Type::Int},
+-    {CmdCreateAnnotText, kCmdArgInteriorColor, CommandArg::Type::Color},
+-
+-    // and  CmdScrollDown, CmdGoToNextPage, CmdGoToPrevPage
+-    {CmdScrollUp, kCmdArgN, CommandArg::Type::Int}, // default
+-
+-    {CmdSetTheme, kCmdArgTheme, CommandArg::Type::String}, // default
+-
+-    {CmdZoomCustom, kCmdArgLevel, CommandArg::Type::String}, // default
+-
+-    {CmdCommandPalette, kCmdArgMode, CommandArg::Type::String}, // default
+-
+-    {CmdNone, "", CommandArg::Type::None}, // sentinel
+-};
+-
+-CustomCommand* gFirstCustomCommand = nullptr;
+-
+-// returns -1 if not found
+-static NO_INLINE int GetCommandIdByNameOrDesc(SeqStrings commands, const char* s) {
+-    int idx = seqstrings::StrToIdxIS(commands, s);
+-    if (idx < 0) {
+-        return -1;
+-    }
+-    ReportIf(idx >= dimofi(gCommandIds));
+-    int cmdId = gCommandIds[idx];
+-    return (int)cmdId;
+-}
+-
+-// cmdName is "CmdOpenFile" etc.
+-// returns -1 if not found
+-int GetCommandIdByName(const char* cmdName) {
+-    int cmdId = GetCommandIdByNameOrDesc(gCommandNames, cmdName);
+-    if (cmdId >= 0) {
+-        return cmdId;
+-    }
+-    // backwards compatibility for old names
+-    if (str::EqI(cmdName, "CmdFindMatch")) {
+-        return CmdFindToggleMatchCase;
+-    }
+-    auto curr = gFirstCustomCommand;
+-    while (curr) {
+-        if (curr->idStr && str::EqI(cmdName, curr->idStr)) {
+-            return curr->id;
+-        }
+-        curr = curr->next;
+-    }
+-    return -1;
+-}
+-
+-// returns -1 if not found
+-int GetCommandIdByDesc(const char* cmdDesc) {
+-    int cmdId = GetCommandIdByNameOrDesc(gCommandDescriptions, cmdDesc);
+-    if (cmdId >= 0) {
+-        return cmdId;
+-    }
+-    auto curr = gFirstCustomCommand;
+-    while (curr) {
+-        if (curr->name && str::EqI(cmdDesc, curr->name)) {
+-            return curr->id;
+-        }
+-        curr = curr->next;
+-    }
+-    return -1;
+-}
+-
+-CommandArg::~CommandArg() {
+-    str::Free(strVal);
+-    str::Free(name);
+-}
+-
+-// arg names are case insensitive
+-static bool IsArgName(const char* name, const char* argName) {
+-    if (str::EqI(name, argName)) {
+-        return true;
+-    }
+-    if (!str::StartsWithI(name, argName)) {
+-        return false;
+-    }
+-    char c = name[str::Len(argName)];
+-    return c == '=';
+-}
+-
+-void InsertArg(CommandArg** firstPtr, CommandArg* arg) {
+-    // for ease of use by callers, we shift null check here
+-    if (!arg) {
+-        return;
+-    }
+-    arg->next = *firstPtr;
+-    *firstPtr = arg;
+-}
+-
+-void FreeCommandArgs(CommandArg* first) {
+-    CommandArg* next;
+-    CommandArg* curr = first;
+-    while (curr) {
+-        next = curr->next;
+-        delete curr;
+-        curr = next;
+-    }
+-}
+-
+-CommandArg* FindArg(CommandArg* first, const char* name, CommandArg::Type type) {
+-    CommandArg* curr = first;
+-    while (curr) {
+-        if (IsArgName(curr->name, name)) {
+-            if (curr->type == type) {
+-                return curr;
+-            }
+-            logf("FindArgByName: found arg of name '%s' by different type (wanted: %d, is: %d)\n", name, type,
+-                 curr->type);
+-        }
+-        curr = curr->next;
+-    }
+-    return nullptr;
+-}
+-
+-static int gNextCustomCommandId = (int)CmdFirstCustom;
+-
+-CustomCommand::~CustomCommand() {
+-    FreeCommandArgs(firstArg);
+-    str::Free(name);
+-    str::Free(key);
+-    str::Free(idStr);
+-    str::Free(definition);
+-}
+-
+-CustomCommand* CreateCustomCommand(const char* definition, int origCmdId, CommandArg* args) {
+-    // if no args we retain original command id
+-    // only when we have unique args we have to create a new command id
+-    int id = origCmdId;
+-    if (args != nullptr) {
+-        id = gNextCustomCommandId++;
+-    } else {
+-#if 0
+-        auto existingCmd = FindCustomCommand(origCmdId);
+-        if (existingCmd) {
+-            return existingCmd;
+-        }
+-#endif
+-    }
+-    auto cmd = new CustomCommand();
+-    cmd->id = id;
+-    cmd->origId = origCmdId;
+-    cmd->definition = str::Dup(definition);
+-    cmd->firstArg = args;
+-    cmd->next = gFirstCustomCommand;
+-    gFirstCustomCommand = cmd;
+-    return cmd;
+-}
+-
+-CustomCommand* FindCustomCommand(int cmdId) {
+-    auto cmd = gFirstCustomCommand;
+-    while (cmd) {
+-        if (cmd->id == cmdId) {
+-            return cmd;
+-        }
+-        cmd = cmd->next;
+-    }
+-    return nullptr;
+-}
+-
+-void FreeCustomCommands() {
+-    CustomCommand* next;
+-    CustomCommand* curr = gFirstCustomCommand;
+-    while (curr) {
+-        next = curr->next;
+-        delete curr;
+-        curr = next;
+-    }
+-    gFirstCustomCommand = nullptr;
+-}
+-
+-void GetCommandsWithOrigId(Vec<CustomCommand*>& commands, int origId) {
+-    CustomCommand* curr = gFirstCustomCommand;
+-    while (curr) {
+-        if (curr->origId == origId) {
+-            commands.Append(curr);
+-        }
+-        curr = curr->next;
+-    }
+-    // reverse so that they are returned in the order they were inserted
+-    commands.Reverse();
+-}
+-
+-static CommandArg* NewArg(CommandArg::Type type, const char* name) {
+-    auto res = new CommandArg();
+-    res->type = type;
+-    res->name = str::Dup(name);
+-    return res;
+-}
+-
+-CommandArg* NewStringArg(const char* name, const char* val) {
+-    auto res = new CommandArg();
+-    res->type = CommandArg::Type::String;
+-    res->name = str::Dup(name);
+-    res->strVal = str::Dup(val);
+-    return res;
+-}
+-
+-CommandArg* NewFloatArg(const char* name, float val) {
+-    auto res = new CommandArg();
+-    res->type = CommandArg::Type::Float;
+-    res->name = str::Dup(name);
+-    res->floatVal = val;
+-    return res;
+-}
+-
+-static CommandArg* ParseArgOfType(const char* argName, CommandArg::Type type, const char* val) {
+-    if (type == CommandArg::Type::Color) {
+-        ParsedColor col;
+-        ParseColor(col, val);
+-        if (!col.parsedOk) {
+-            // invalid value, skip it
+-            logf("parseArgOfType: invalid color value '%s'\n", val);
+-            return nullptr;
+-        }
+-        auto arg = NewArg(type, argName);
+-        arg->colorVal = col;
+-        return arg;
+-    }
+-
+-    if (type == CommandArg::Type::Int) {
+-        auto arg = NewArg(type, argName);
+-        arg->intVal = ParseInt(val);
+-        return arg;
+-    }
+-
+-    if (type == CommandArg::Type::String) {
+-        auto arg = NewArg(type, argName);
+-        arg->strVal = str::Dup(val);
+-        return arg;
+-    }
+-
+-    ReportIf(true);
+-    return nullptr;
+-}
+-
+-CommandArg* TryParseDefaultArg(int defaultArgIdx, const char** argsInOut) {
+-    // first is default value
+-    const char* valStart = str::SkipChar(*argsInOut, ' ');
+-    const char* valEnd = str::FindChar(valStart, ' ');
+-    const char* argName = argSpecs[defaultArgIdx].name;
+-    CommandArg::Type type = argSpecs[defaultArgIdx].type;
+-    if (type == CommandArg::Type::String) {
+-        // for strings we eat it all to avoid the need for proper quoting
+-        // creates a problem: all named args must be before default string arg
+-        valEnd = nullptr;
+-    }
+-    TempStr val = nullptr;
+-    if (valEnd == nullptr) {
+-        val = str::Dup(valStart);
+-    } else {
+-        val = str::Dup(valStart, valEnd - valStart);
+-        valEnd = str::SkipChar(valEnd, ' ');
+-    }
+-    // no matter what, we advance past the value
+-    *argsInOut = valEnd;
+-
+-    // we don't support bool because we don't have to yet
+-    // (no command have default bool value)
+-    return ParseArgOfType(argName, type, val);
+-}
+-
+-// 1  : true
+-// 0  : false
+-// -1 : not a known boolean string
+-static int ParseBool(const char* s) {
+-    if (str::EqI(s, "1") || str::EqI(s, "true") || str::EqI(s, "yes")) {
+-        return true;
+-    }
+-    if (str::EqI(s, "0") || str::EqI(s, "false") || str::EqI(s, "no")) {
+-        return true;
+-    }
+-    return false;
+-}
+-
+-// parse:
+-//   <name> <value>
+-//   <name>: <value>
+-//   <name>=<value>
+-// for booleans only <name> works as well and represents true
+-CommandArg* TryParseNamedArg(int firstArgIdx, const char** argsInOut) {
+-    const char* valStart = nullptr;
+-    const char* argName = nullptr;
+-    CommandArg::Type type = CommandArg::Type::None;
+-    const char* s = *argsInOut;
+-    int cmdId = argSpecs[firstArgIdx].cmdId;
+-    for (int i = firstArgIdx;; i++) {
+-        if (argSpecs[i].cmdId != cmdId) {
+-            // not a known argument for this command
+-            return nullptr;
+-        }
+-        argName = argSpecs[i].name;
+-        if (!str::StartsWithI(s, argName)) {
+-            continue;
+-        }
+-        type = argSpecs[i].type;
+-        break;
+-    }
+-    s += str::Len(argName);
+-    if (s[0] == 0) {
+-        if (type == CommandArg::Type::Bool) {
+-            // name of bool arg followed by nothing is true
+-            *argsInOut = nullptr;
+-            auto arg = NewArg(type, argName);
+-            arg->boolVal = true;
+-            return arg;
+-        }
+-    } else if (s[0] == ' ') {
+-        if (type == CommandArg::Type::Bool) {
+-            // name of bool arg followed by nothing is true
+-            s = str::SkipChar(s, ' ');
+-            *argsInOut = s;
+-            auto arg = NewArg(type, argName);
+-            arg->boolVal = true;
+-            return arg;
+-        }
+-        valStart = str::SkipChar(s, ' ');
+-    } else if (s[0] == ':' && s[1] == ' ') {
+-        valStart = str::SkipChar(s + 1, ' ');
+-    } else if (s[0] == '=') {
+-        valStart = s + 1;
+-    }
+-    if (valStart == nullptr) {
+-        // <args> doesn't start with any of the available commands for this command
+-        return nullptr;
+-    }
+-    const char* valEnd = str::FindChar(valStart, ' ');
+-    TempStr val = nullptr;
+-    if (valEnd == nullptr) {
+-        val = str::DupTemp(valStart);
+-    } else {
+-        val = str::DupTemp(valStart, valEnd - valStart);
+-        valEnd++;
+-    }
+-    if (type == CommandArg::Type::Bool) {
+-        auto bv = ParseBool(val);
+-        bool b;
+-        if (bv == 0) {
+-            b = false;
+-            *argsInOut = valEnd;
+-        } else if (bv == 1) {
+-            b = true;
+-            *argsInOut = valEnd;
+-        } else {
+-            // bv is -1, which means not a recognized bool value, so assume
+-            // it wasn't given
+-            // TODO: should apply only if arg doesn't end with ':' or '='
+-            b = true;
+-            *argsInOut = valStart;
+-        }
+-        auto arg = NewArg(type, argName);
+-        arg->boolVal = b;
+-        return arg;
+-    }
+-
+-    *argsInOut = valEnd;
+-    return ParseArgOfType(argName, type, val);
+-}
+-
+-// create custom command as defined in Shortcuts section in advanced settings.
+-// we return null if unkown command
+-CustomCommand* CreateCommandFromDefinition(const char* definition) {
+-    StrVec parts;
+-    Split(&parts, definition, " ", true, 2);
+-    const char* cmd = parts[0];
+-    int cmdId = GetCommandIdByName(cmd);
+-    if (cmdId < 0) {
+-        // TODO: make it a notification
+-        logf("CreateCommandFromDefinition: unknown cmd name in '%s'\n", definition);
+-        return nullptr;
+-    }
+-    if (parts.Size() == 1) {
+-        return CreateCustomCommand(definition, cmdId, nullptr);
+-    }
+-
+-    // some commands share the same arguments, so cannonalize them
+-    int argCmdId = cmdId;
+-    switch (cmdId) {
+-        case CmdCreateAnnotText:
+-        case CmdCreateAnnotLink:
+-        case CmdCreateAnnotFreeText:
+-        case CmdCreateAnnotLine:
+-        case CmdCreateAnnotSquare:
+-        case CmdCreateAnnotCircle:
+-        case CmdCreateAnnotPolygon:
+-        case CmdCreateAnnotPolyLine:
+-        case CmdCreateAnnotHighlight:
+-        case CmdCreateAnnotUnderline:
+-        case CmdCreateAnnotSquiggly:
+-        case CmdCreateAnnotStrikeOut:
+-        case CmdCreateAnnotRedact:
+-        case CmdCreateAnnotStamp:
+-        case CmdCreateAnnotCaret:
+-        case CmdCreateAnnotInk:
+-        case CmdCreateAnnotPopup:
+-        case CmdCreateAnnotFileAttachment: {
+-            argCmdId = CmdCreateAnnotText;
+-            break;
+-        }
+-        case CmdScrollUp:
+-        case CmdScrollDown:
+-        case CmdGoToNextPage:
+-        case CmdGoToPrevPage: {
+-            argCmdId = CmdScrollUp;
+-            break;
+-        }
+-    }
+-
+-    // find arguments for this cmdId
+-    int firstArgIdx = -1;
+-    for (int i = 0;; i++) {
+-        int id = argSpecs[i].cmdId;
+-        if (id == CmdNone) {
+-            // the command doesn't accept any arguments
+-            logf("CreateCommandFromDefinition: cmd '%s' doesn't accept arguments\n", definition);
+-            return CreateCustomCommand(definition, cmdId, nullptr);
+-        }
+-        if (id != argCmdId) {
+-            continue;
+-        }
+-        firstArgIdx = i;
+-        break;
+-    }
+-    if (firstArgIdx < 0) {
+-        // shouldn't happen, we already filtered commands without arguments
+-        logf("CreateCommandFromDefinition: didn't find arguments for: '%s', cmdId: %d, argCmdId: '%d'\n", definition,
+-             cmdId, argCmdId);
+-        ReportIf(true);
+-        return nullptr;
+-    }
+-
+-    const char* currArg = parts[1];
+-
+-    CommandArg* firstArg = nullptr;
+-    CommandArg* arg;
+-    for (; currArg;) {
+-        arg = TryParseNamedArg(firstArgIdx, &currArg);
+-        if (!arg) {
+-            arg = TryParseDefaultArg(firstArgIdx, &currArg);
+-        }
+-        if (arg) {
+-            InsertArg(&firstArg, arg);
+-        }
+-    }
+-    if (!firstArg) {
+-        logf("CreateCommandFromDefinition: failed to parse arguments for '%s'\n", definition);
+-        return nullptr;
+-    }
+-
+-    if (cmdId == CmdCommandPalette && firstArg) {
+-        // validate mode
+-        const char* s = firstArg->strVal;
+-        static SeqStrings validModes = ">\0#\0@\0:\0"; // TODO: "@@\0" ?
+-        if (seqstrings::StrToIdx(validModes, s) < 0) {
+-            logf("CreateCommandFromDefinition: invalid CmdCommandPalette mode in '%s'\n", definition);
+-            FreeCommandArgs(firstArg);
+-            firstArg = nullptr;
+-        }
+-    }
+-
+-    if (cmdId == CmdZoomCustom) {
+-        // special case: the argument is declared as string but it really is float
+-        // we convert it in-place here
+-        float zoomVal = ZoomFromString(firstArg->strVal, 0);
+-        if (0 == zoomVal) {
+-            FreeCommandArgs(firstArg);
+-            logf("CreateCommandFromDefinition: failed to parse arguments in '%s'\n", definition);
+-            return nullptr;
+-        }
+-        firstArg->type = CommandArg::Type::Float;
+-        firstArg->floatVal = zoomVal;
+-    }
+-    auto res = CreateCustomCommand(definition, cmdId, firstArg);
+-    return res;
+-}
+-
+-CommandArg* GetCommandArg(CustomCommand* cmd, const char* name) {
+-    if (!cmd) {
+-        return nullptr;
+-    }
+-    CommandArg* curr = cmd->firstArg;
+-    while (curr) {
+-        if (str::EqI(curr->name, name)) {
+-            return curr;
+-        }
+-        curr = curr->next;
+-    }
+-    return nullptr;
+-}
+-
+-int GetCommandIntArg(CustomCommand* cmd, const char* name, int defValue) {
+-    auto arg = GetCommandArg(cmd, name);
+-    if (arg) {
+-        return arg->intVal;
+-    }
+-    return defValue;
+-}
+-
+-bool GetCommandBoolArg(CustomCommand* cmd, const char* name, bool defValue) {
+-    auto arg = GetCommandArg(cmd, name);
+-    if (arg) {
+-        return arg->boolVal;
+-    }
+-    return defValue;
+-}
+-
+-const char* GetCommandStringArg(CustomCommand* cmd, const char* name, const char* defValue) {
+-    auto arg = GetCommandArg(cmd, name);
+-    if (arg) {
+-        return arg->strVal;
+-    }
+-    return defValue;
+-}
++    "Do nothing\0" "\0";
++// clang-format on
++// @gen-end cmd-c
++
++struct ArgSpec {
++    int cmdId;
++    const char* name;
++    CommandArg::Type type;
++};
++
++// arguments for the same command should follow each other
++// first argument is default and can be specified without a name
++static const ArgSpec argSpecs[] = {
++    {CmdSelectionHandler, kCmdArgURL, CommandArg::Type::String}, // default
++    {CmdSelectionHandler, kCmdArgExe, CommandArg::Type::String},
++
++    {CmdExec, kCmdArgExe, CommandArg::Type::String}, // default
++    {CmdExec, kCmdArgFilter, CommandArg::Type::String},
++
++    // and all CmdCreateAnnot* commands
++    {CmdCreateAnnotText, kCmdArgColor, CommandArg::Type::Color}, // default
++    {CmdCreateAnnotText, kCmdArgBgColor, CommandArg::Type::Color},
++    {CmdCreateAnnotText, kCmdArgOpacity, CommandArg::Type::Int},
++    {CmdCreateAnnotText, kCmdArgOpenEdit, CommandArg::Type::Bool},
++    {CmdCreateAnnotText, kCmdArgCopyToClipboard, CommandArg::Type::Bool},
++    {CmdCreateAnnotText, kCmdArgSetContent, CommandArg::Type::Bool},
++    {CmdCreateAnnotText, kCmdArgTextSize, CommandArg::Type::Int},
++    {CmdCreateAnnotText, kCmdArgBorderWidth, CommandArg::Type::Int},
++    {CmdCreateAnnotText, kCmdArgInteriorColor, CommandArg::Type::Color},
++    {CmdCreateAnnotText, kCmdArgFocusEdit, CommandArg::Type::Bool},
++    {CmdCreateAnnotText, kCmdArgFocusList, CommandArg::Type::Bool},
++
++    // and  CmdScrollDown, CmdGoToNextPage, CmdGoToPrevPage
++    {CmdScrollUp, kCmdArgN, CommandArg::Type::Int}, // default
++
++    {CmdSetTheme, kCmdArgTheme, CommandArg::Type::String}, // default
++
++    {CmdZoomCustom, kCmdArgLevel, CommandArg::Type::String}, // default
++
++    {CmdCommandPalette, kCmdArgMode, CommandArg::Type::String}, // default
++
++    {CmdNone, "", CommandArg::Type::None}, // sentinel
++};
++
++CustomCommand* gFirstCustomCommand = nullptr;
++
++// returns -1 if not found
++static NO_INLINE int GetCommandIdByNameOrDesc(SeqStrings commands, const char* s) {
++    int idx = seqstrings::StrToIdxIS(commands, s);
++    if (idx < 0) {
++        return -1;
++    }
++    ReportIf(idx >= dimofi(gCommandIds));
++    int cmdId = gCommandIds[idx];
++    return (int)cmdId;
++}
++
++// cmdName is "CmdOpenFile" etc.
++// returns -1 if not found
++int GetCommandIdByName(const char* cmdName) {
++    int cmdId = GetCommandIdByNameOrDesc(gCommandNames, cmdName);
++    if (cmdId >= 0) {
++        return cmdId;
++    }
++    // backwards compatibility for old names
++    if (str::EqI(cmdName, "CmdFindMatch")) {
++        return CmdFindToggleMatchCase;
++    }
++    auto curr = gFirstCustomCommand;
++    while (curr) {
++        if (curr->idStr && str::EqI(cmdName, curr->idStr)) {
++            return curr->id;
++        }
++        curr = curr->next;
++    }
++    return -1;
++}
++
++// returns -1 if not found
++int GetCommandIdByDesc(const char* cmdDesc) {
++    int cmdId = GetCommandIdByNameOrDesc(gCommandDescriptions, cmdDesc);
++    if (cmdId >= 0) {
++        return cmdId;
++    }
++    auto curr = gFirstCustomCommand;
++    while (curr) {
++        if (curr->name && str::EqI(cmdDesc, curr->name)) {
++            return curr->id;
++        }
++        curr = curr->next;
++    }
++    return -1;
++}
++
++CommandArg::~CommandArg() {
++    str::Free(strVal);
++    str::Free(name);
++}
++
++// arg names are case insensitive
++static bool IsArgName(const char* name, const char* argName) {
++    if (str::EqI(name, argName)) {
++        return true;
++    }
++    if (!str::StartsWithI(name, argName)) {
++        return false;
++    }
++    char c = name[str::Len(argName)];
++    return c == '=';
++}
++
++void InsertArg(CommandArg** firstPtr, CommandArg* arg) {
++    // for ease of use by callers, we shift null check here
++    if (!arg) {
++        return;
++    }
++    arg->next = *firstPtr;
++    *firstPtr = arg;
++}
++
++void FreeCommandArgs(CommandArg* first) {
++    CommandArg* next;
++    CommandArg* curr = first;
++    while (curr) {
++        next = curr->next;
++        delete curr;
++        curr = next;
++    }
++}
++
++CommandArg* FindArg(CommandArg* first, const char* name, CommandArg::Type type) {
++    CommandArg* curr = first;
++    while (curr) {
++        if (IsArgName(curr->name, name)) {
++            if (curr->type == type) {
++                return curr;
++            }
++            logf("FindArgByName: found arg of name '%s' by different type (wanted: %d, is: %d)\n", name, type,
++                 curr->type);
++        }
++        curr = curr->next;
++    }
++    return nullptr;
++}
++
++static int gNextCustomCommandId = (int)CmdFirstCustom;
++
++CustomCommand::~CustomCommand() {
++    FreeCommandArgs(firstArg);
++    str::Free(name);
++    str::Free(key);
++    str::Free(idStr);
++    str::Free(definition);
++}
++
++CustomCommand* CreateCustomCommand(const char* definition, int origCmdId, CommandArg* args) {
++    // if no args we retain original command id
++    // only when we have unique args we have to create a new command id
++    int id = origCmdId;
++    if (args != nullptr) {
++        id = gNextCustomCommandId++;
++    } else {
++#if 0
++        auto existingCmd = FindCustomCommand(origCmdId);
++        if (existingCmd) {
++            return existingCmd;
++        }
++#endif
++    }
++    auto cmd = new CustomCommand();
++    cmd->id = id;
++    cmd->origId = origCmdId;
++    cmd->definition = str::Dup(definition);
++    cmd->firstArg = args;
++    cmd->next = gFirstCustomCommand;
++    gFirstCustomCommand = cmd;
++    return cmd;
++}
++
++CustomCommand* FindCustomCommand(int cmdId) {
++    auto cmd = gFirstCustomCommand;
++    while (cmd) {
++        if (cmd->id == cmdId) {
++            return cmd;
++        }
++        cmd = cmd->next;
++    }
++    return nullptr;
++}
++
++void FreeCustomCommands() {
++    CustomCommand* next;
++    CustomCommand* curr = gFirstCustomCommand;
++    while (curr) {
++        next = curr->next;
++        delete curr;
++        curr = next;
++    }
++    gFirstCustomCommand = nullptr;
++}
++
++void GetCommandsWithOrigId(Vec<CustomCommand*>& commands, int origId) {
++    CustomCommand* curr = gFirstCustomCommand;
++    while (curr) {
++        if (curr->origId == origId) {
++            commands.Append(curr);
++        }
++        curr = curr->next;
++    }
++    // reverse so that they are returned in the order they were inserted
++    commands.Reverse();
++}
++
++static CommandArg* NewArg(CommandArg::Type type, const char* name) {
++    auto res = new CommandArg();
++    res->type = type;
++    res->name = str::Dup(name);
++    return res;
++}
++
++CommandArg* NewStringArg(const char* name, const char* val) {
++    auto res = new CommandArg();
++    res->type = CommandArg::Type::String;
++    res->name = str::Dup(name);
++    res->strVal = str::Dup(val);
++    return res;
++}
++
++CommandArg* NewFloatArg(const char* name, float val) {
++    auto res = new CommandArg();
++    res->type = CommandArg::Type::Float;
++    res->name = str::Dup(name);
++    res->floatVal = val;
++    return res;
++}
++
++static CommandArg* ParseArgOfType(const char* argName, CommandArg::Type type, const char* val) {
++    if (type == CommandArg::Type::Color) {
++        ParsedColor col;
++        ParseColor(col, val);
++        if (!col.parsedOk) {
++            // invalid value, skip it
++            logf("parseArgOfType: invalid color value '%s'\n", val);
++            return nullptr;
++        }
++        auto arg = NewArg(type, argName);
++        arg->colorVal = col;
++        return arg;
++    }
++
++    if (type == CommandArg::Type::Int) {
++        auto arg = NewArg(type, argName);
++        arg->intVal = ParseInt(val);
++        return arg;
++    }
++
++    if (type == CommandArg::Type::String) {
++        auto arg = NewArg(type, argName);
++        arg->strVal = str::Dup(val);
++        return arg;
++    }
++
++    ReportIf(true);
++    return nullptr;
++}
++
++CommandArg* TryParseDefaultArg(int defaultArgIdx, const char** argsInOut) {
++    // first is default value
++    const char* valStart = str::SkipChar(*argsInOut, ' ');
++    const char* valEnd = str::FindChar(valStart, ' ');
++    const char* argName = argSpecs[defaultArgIdx].name;
++    CommandArg::Type type = argSpecs[defaultArgIdx].type;
++    if (type == CommandArg::Type::String) {
++        // for strings we eat it all to avoid the need for proper quoting
++        // creates a problem: all named args must be before default string arg
++        valEnd = nullptr;
++    }
++    TempStr val = nullptr;
++    if (valEnd == nullptr) {
++        val = str::Dup(valStart);
++    } else {
++        val = str::Dup(valStart, valEnd - valStart);
++        valEnd = str::SkipChar(valEnd, ' ');
++    }
++    // no matter what, we advance past the value
++    *argsInOut = valEnd;
++
++    // we don't support bool because we don't have to yet
++    // (no command have default bool value)
++    return ParseArgOfType(argName, type, val);
++}
++
++// 1  : true
++// 0  : false
++// -1 : not a known boolean string
++static int ParseBool(const char* s) {
++    if (str::EqI(s, "1") || str::EqI(s, "true") || str::EqI(s, "yes")) {
++        return true;
++    }
++    if (str::EqI(s, "0") || str::EqI(s, "false") || str::EqI(s, "no")) {
++        return true;
++    }
++    return false;
++}
++
++// parse:
++//   <name> <value>
++//   <name>: <value>
++//   <name>=<value>
++// for booleans only <name> works as well and represents true
++CommandArg* TryParseNamedArg(int firstArgIdx, const char** argsInOut) {
++    const char* valStart = nullptr;
++    const char* argName = nullptr;
++    CommandArg::Type type = CommandArg::Type::None;
++    const char* s = *argsInOut;
++    int cmdId = argSpecs[firstArgIdx].cmdId;
++    for (int i = firstArgIdx;; i++) {
++        if (argSpecs[i].cmdId != cmdId) {
++            // not a known argument for this command
++            return nullptr;
++        }
++        argName = argSpecs[i].name;
++        if (!str::StartsWithI(s, argName)) {
++            continue;
++        }
++        type = argSpecs[i].type;
++        break;
++    }
++    s += str::Len(argName);
++    if (s[0] == 0) {
++        if (type == CommandArg::Type::Bool) {
++            // name of bool arg followed by nothing is true
++            *argsInOut = nullptr;
++            auto arg = NewArg(type, argName);
++            arg->boolVal = true;
++            return arg;
++        }
++    } else if (s[0] == ' ') {
++        if (type == CommandArg::Type::Bool) {
++            // name of bool arg followed by nothing is true
++            s = str::SkipChar(s, ' ');
++            *argsInOut = s;
++            auto arg = NewArg(type, argName);
++            arg->boolVal = true;
++            return arg;
++        }
++        valStart = str::SkipChar(s, ' ');
++    } else if (s[0] == ':' && s[1] == ' ') {
++        valStart = str::SkipChar(s + 1, ' ');
++    } else if (s[0] == '=') {
++        valStart = s + 1;
++    }
++    if (valStart == nullptr) {
++        // <args> doesn't start with any of the available commands for this command
++        return nullptr;
++    }
++    const char* valEnd = str::FindChar(valStart, ' ');
++    TempStr val = nullptr;
++    if (valEnd == nullptr) {
++        val = str::DupTemp(valStart);
++    } else {
++        val = str::DupTemp(valStart, valEnd - valStart);
++        valEnd++;
++    }
++    if (type == CommandArg::Type::Bool) {
++        auto bv = ParseBool(val);
++        bool b;
++        if (bv == 0) {
++            b = false;
++            *argsInOut = valEnd;
++        } else if (bv == 1) {
++            b = true;
++            *argsInOut = valEnd;
++        } else {
++            // bv is -1, which means not a recognized bool value, so assume
++            // it wasn't given
++            // TODO: should apply only if arg doesn't end with ':' or '='
++            b = true;
++            *argsInOut = valStart;
++        }
++        auto arg = NewArg(type, argName);
++        arg->boolVal = b;
++        return arg;
++    }
++
++    *argsInOut = valEnd;
++    return ParseArgOfType(argName, type, val);
++}
++
++// create custom command as defined in Shortcuts section in advanced settings.
++// we return null if unkown command
++CustomCommand* CreateCommandFromDefinition(const char* definition) {
++    StrVec parts;
++    Split(&parts, definition, " ", true, 2);
++    const char* cmd = parts[0];
++    int cmdId = GetCommandIdByName(cmd);
++    if (cmdId < 0) {
++        MaybeDelayedWarningNotification("Error parsing Shortcuts: unknown cmd name in '%s'\n", definition);
++        return nullptr;
++    }
++    if (parts.Size() == 1) {
++        return CreateCustomCommand(definition, cmdId, nullptr);
++    }
++
++    // some commands share the same arguments, so cannonalize them
++    int argCmdId = cmdId;
++    switch (cmdId) {
++        case CmdCreateAnnotText:
++        case CmdCreateAnnotLink:
++        case CmdCreateAnnotFreeText:
++        case CmdCreateAnnotLine:
++        case CmdCreateAnnotSquare:
++        case CmdCreateAnnotCircle:
++        case CmdCreateAnnotPolygon:
++        case CmdCreateAnnotPolyLine:
++        case CmdCreateAnnotHighlight:
++        case CmdCreateAnnotUnderline:
++        case CmdCreateAnnotSquiggly:
++        case CmdCreateAnnotStrikeOut:
++        case CmdCreateAnnotRedact:
++        case CmdCreateAnnotStamp:
++        case CmdCreateAnnotCaret:
++        case CmdCreateAnnotInk:
++        case CmdCreateAnnotPopup:
++        case CmdCreateAnnotFileAttachment: {
++            argCmdId = CmdCreateAnnotText;
++            break;
++        }
++        case CmdScrollUp:
++        case CmdScrollDown:
++        case CmdGoToNextPage:
++        case CmdGoToPrevPage: {
++            argCmdId = CmdScrollUp;
++            break;
++        }
++    }
++
++    // find arguments for this cmdId
++    int firstArgIdx = -1;
++    for (int i = 0;; i++) {
++        int id = argSpecs[i].cmdId;
++        if (id == CmdNone) {
++            // the command doesn't accept any arguments
++            MaybeDelayedWarningNotification("Error parsing Shortcuts: cmd '%s' doesn't accept arguments\n", definition);
++            return CreateCustomCommand(definition, cmdId, nullptr);
++        }
++        if (id != argCmdId) {
++            continue;
++        }
++        firstArgIdx = i;
++        break;
++    }
++    if (firstArgIdx < 0) {
++        // shouldn't happen, we already filtered commands without arguments
++        logf("CreateCommandFromDefinition: didn't find arguments for: '%s', cmdId: %d, argCmdId: '%d'\n", definition,
++             cmdId, argCmdId);
++        ReportIf(true);
++        return nullptr;
++    }
++
++    const char* currArg = parts[1];
++
++    CommandArg* firstArg = nullptr;
++    CommandArg* arg;
++    for (; currArg;) {
++        arg = TryParseNamedArg(firstArgIdx, &currArg);
++        if (!arg) {
++            arg = TryParseDefaultArg(firstArgIdx, &currArg);
++        }
++        if (arg) {
++            InsertArg(&firstArg, arg);
++        }
++    }
++    if (!firstArg) {
++        MaybeDelayedWarningNotification("Error parsing Shortcuts: failed to parse arguments for '%s'\n", definition);
++        return nullptr;
++    }
++
++    if (cmdId == CmdCommandPalette && firstArg) {
++        // validate mode
++        const char* s = firstArg->strVal;
++        static SeqStrings validModes = ">\0#\0@\0:\0"; // TODO: "@@\0" ?
++        if (seqstrings::StrToIdx(validModes, s) < 0) {
++            logf("CreateCommandFromDefinition: invalid CmdCommandPalette mode in '%s'\n", definition);
++            FreeCommandArgs(firstArg);
++            firstArg = nullptr;
++        }
++    }
++
++    if (cmdId == CmdZoomCustom) {
++        // special case: the argument is declared as string but it really is float
++        // we convert it in-place here
++        float zoomVal = ZoomFromString(firstArg->strVal, 0);
++        if (0 == zoomVal) {
++            FreeCommandArgs(firstArg);
++            MaybeDelayedWarningNotification("CreateCommandFromDefinition: failed to parse arguments in '%s'\n",
++                                            definition);
++            return nullptr;
++        }
++        firstArg->type = CommandArg::Type::Float;
++        firstArg->floatVal = zoomVal;
++    }
++    auto res = CreateCustomCommand(definition, cmdId, firstArg);
++    return res;
++}
++
++CommandArg* GetCommandArg(CustomCommand* cmd, const char* name) {
++    if (!cmd) {
++        return nullptr;
++    }
++    CommandArg* curr = cmd->firstArg;
++    while (curr) {
++        if (str::EqI(curr->name, name)) {
++            return curr;
++        }
++        curr = curr->next;
++    }
++    return nullptr;
++}
++
++int GetCommandIntArg(CustomCommand* cmd, const char* name, int defValue) {
++    auto arg = GetCommandArg(cmd, name);
++    if (arg) {
++        return arg->intVal;
++    }
++    return defValue;
++}
++
++bool GetCommandBoolArg(CustomCommand* cmd, const char* name, bool defValue) {
++    auto arg = GetCommandArg(cmd, name);
++    if (arg) {
++        return arg->boolVal;
++    }
++    return defValue;
++}
++
++const char* GetCommandStringArg(CustomCommand* cmd, const char* name, const char* defValue) {
++    auto arg = GetCommandArg(cmd, name);
++    if (arg) {
++        return arg->strVal;
++    }
++    return defValue;
++}
+diff --git a/src/CrashHandler.cpp b/src/CrashHandler.cpp
+index b0017130b..ff1b7493d 100644
+--- a/src/CrashHandler.cpp
++++ b/src/CrashHandler.cpp
+@@ -148,7 +148,11 @@ char* BuildCrashInfoText(const char* condStr, bool isCrash, bool captureCallstac
+     }
+ 
+     s.Append("\n-------- Log -----------------\n\n");
+-    s.Append(gLogBuf->LendData());
++    if (gLogBuf) {
++        s.Append(gLogBuf->LendData());
++    } else {
++        s.Append("(no log - crashed before initializing logging)\n");
++    }
+ 
+     if (gSettingsFile) {
+         s.Append("\n\n----- Settings file ----------\n\n");
+@@ -627,10 +631,19 @@ static void GetSystemInfo(str::Str& s) {
+         if (cpu & kCpuAVX2) {
+             s.Append("AVX2 ");
+         }
++        if (cpu & kCpuNEON) {
++            s.Append("NEON ");
++        }
++        if (cpu & kCpuArmCrypto) {
++            s.Append("Crypto ");
++        }
++        if (cpu & kCpuArmAtomics) {
++            s.Append("Atomics ");
++        }
++        if (cpu & kCpuArmDotProd) {
++            s.Append("DotProd ");
++        }
+     }
+-
+-    // Note: maybe more information, like:
+-    // * processor capabilities (mmx, sse, sse2 etc.)
+ }
+ 
+ // returns true if running on wine
+diff --git a/src/DisplayModel.cpp b/src/DisplayModel.cpp
+index a88e28a1a..73a4e2899 100644
+--- a/src/DisplayModel.cpp
++++ b/src/DisplayModel.cpp
+@@ -314,7 +314,9 @@ DisplayModel::DisplayModel(EngineBase* engine, DocControllerCallback* cb) : DocC
+ DisplayModel::~DisplayModel() {
+     logf("~DisplayModel: 0x%p\n", this);
+     pauseRendering = true;
+-    cb->CleanUp(this);
++    if (cb) {
++        cb->CleanUp(this);
++    }
+ 
+     delete pdfSync;
+     delete textSearch;
+diff --git a/src/EbookDoc.cpp b/src/EbookDoc.cpp
+index d5469f3cf..608aef1dd 100644
+--- a/src/EbookDoc.cpp
++++ b/src/EbookDoc.cpp
+@@ -87,7 +87,7 @@ static TempStr DecodeTextToUtf8Temp(const char* s, bool isXML = false) {
+     }
+     if (str::StartsWith(s, UTF16_BOM)) {
+         s += 2;
+-        WCHAR* ws = str::ToWCHAR(s);
++        WCHAR* ws = str::CastToWCHAR(s);
+         return ToUtf8Temp(ws);
+     }
+     if (str::StartsWith(s, UTF16BE_BOM)) {
+@@ -99,7 +99,7 @@ static TempStr DecodeTextToUtf8Temp(const char* s, bool isXML = false) {
+             int idx = i * 2;
+             std::swap(tmp[idx], tmp[idx + 1]);
+         }
+-        WCHAR* ws = str::ToWCHAR(s);
++        WCHAR* ws = str::CastToWCHAR(s);
+         return ToUtf8Temp(ws);
+     }
+     uint codePage = isXML ? GetCodepageFromPI(s) : CP_ACP;
+diff --git a/src/EditAnnotations.cpp b/src/EditAnnotations.cpp
+index 91b623e19..e8fa9da36 100644
+--- a/src/EditAnnotations.cpp
++++ b/src/EditAnnotations.cpp
+@@ -196,7 +196,7 @@ void DeleteAnnotationAndUpdateUI(WindowTab* tab, Annotation* annot) {
+         }
+ #endif
+     }
+-    SetSelectedAnnotation(tab, selectNext, false);
++    SetSelectedAnnotation(tab, selectNext);
+ }
+ 
+ static void DeleteSelectedAnnotation(EditAnnotationsWindow* ew) {
+@@ -206,7 +206,11 @@ static void DeleteSelectedAnnotation(EditAnnotationsWindow* ew) {
+         return;
+     }
+     Annotation* annot = ew->annotations.at(idx);
+-    ReportIf(ew->tab->selectedAnnotation != annot);
++    if (ew->tab->selectedAnnotation != annot) {
++        // can get out of sync if e.g. keyboard navigation in listbox
++        // hasn't triggered ListBoxSelectionChanged yet
++        ew->tab->selectedAnnotation = annot;
++    }
+     DeleteAnnotationAndUpdateUI(ew->tab, annot);
+ 
+     // Note: auto-selecting next annotation might cause page jumping
+@@ -351,9 +355,9 @@ static void RebuildAnnotationsListBox(EditAnnotationsWindow* ew) {
+     for (int i = 0; i < n; i++) {
+         auto annot = ew->annotations.at(i);
+         s.Reset();
+-        s.AppendFmt("page %d, ", annot->pageNo);
++        s.AppendFmt(_TRA("page %d,"), annot->pageNo);
+         TempStr name = AnnotationReadableNameTemp(annot->type);
+-        s.Append(name);
++        s.AppendFmt(" %s", name);
+         model->strings.Append(s.Get());
+     }
+ 
+@@ -395,9 +399,67 @@ static void ButtonSaveToCurrentPDFHandler(EditAnnotationsWindow* ew) {
+     SaveAnnotationsToExistingFile(ew->tab);
+ }
+ 
++constexpr int kMaxControls = 18;
++
++static void AdvanceFocus(EditAnnotationsWindow* ew, bool forward) {
++    HWND controls[kMaxControls];
++    int n = 0;
++    auto addIfVisible = [&](HWND h) {
++        if (h && IsWindowVisible(h)) {
++            ReportIf(n >= kMaxControls);
++            controls[n++] = h;
++        }
++    };
++
++    addIfVisible(ew->listBox->hwnd);
++    addIfVisible(ew->editContents->hwnd);
++    addIfVisible(ew->dropDownTextAlignment->hwnd);
++    addIfVisible(ew->dropDownTextFont->hwnd);
++    addIfVisible(ew->trackbarTextSize->hwnd);
++    addIfVisible(ew->dropDownTextColor->hwnd);
++    addIfVisible(ew->dropDownLineStart->hwnd);
++    addIfVisible(ew->dropDownLineEnd->hwnd);
++    addIfVisible(ew->dropDownIcon->hwnd);
++    addIfVisible(ew->trackbarBorder->hwnd);
++    addIfVisible(ew->dropDownColor->hwnd);
++    addIfVisible(ew->dropDownInteriorColor->hwnd);
++    addIfVisible(ew->trackbarOpacity->hwnd);
++    addIfVisible(ew->buttonSaveAttachment->hwnd);
++    addIfVisible(ew->buttonEmbedAttachment->hwnd);
++    addIfVisible(ew->buttonDelete->hwnd);
++    addIfVisible(ew->buttonSaveToCurrentFile->hwnd);
++    addIfVisible(ew->buttonSaveToNewFile->hwnd);
++
++    if (n == 0) {
++        return;
++    }
++
++    HWND focused = ::GetFocus();
++    int idx = -1;
++    for (int i = 0; i < n; i++) {
++        if (controls[i] == focused || ::IsChild(controls[i], focused)) {
++            idx = i;
++            break;
++        }
++    }
++
++    int next;
++    if (forward) {
++        next = (idx + 1) % n;
++    } else {
++        next = (idx <= 0) ? n - 1 : idx - 1;
++    }
++    HwndSetFocus(controls[next]);
++}
++
+ bool EditAnnotationsWindow::PreTranslateMessage(MSG& msg) {
+     if (msg.message == WM_KEYDOWN) {
+         int key = (int)msg.wParam;
++        if (key == VK_TAB) {
++            bool forward = !IsShiftPressed();
++            AdvanceFocus(this, forward);
++            return true;
++        }
+         if (key == VK_DELETE) {
+             if (IsCtrlPressed()) {
+                 DeleteSelectedAnnotation(this);
+@@ -797,7 +859,8 @@ static void OpacityChanging(EditAnnotationsWindow* ew, Trackbar::PositionChangin
+ }
+ 
+ // TODO: maybe use ew->tab->selectedAnnotation instead of annot
+-static void UpdateUIForSelectedAnnotation(EditAnnotationsWindow* ew, Annotation* annot, bool setEditFocus) {
++static void UpdateUIForSelectedAnnotation(EditAnnotationsWindow* ew, Annotation* annot, bool isNew = false,
++                                          EditAnnotFocus focus = EditAnnotFocus::Default) {
+     HidePerAnnotControls(ew);
+     if (annot) {
+         int itemNo = ew->annotations.Find(annot);
+@@ -825,17 +888,21 @@ static void UpdateUIForSelectedAnnotation(EditAnnotationsWindow* ew, Annotation*
+         DoOpacity(ew, annot);
+         DoSaveEmbed(ew, annot);
+ 
+-        // TODO: not sure it should be here as it might trigger recursive loop
+-        // SetSelectedAnnotation(ew->tab, annot);
+         ew->listBox->SetCurrentSelection(itemNo);
+         ew->buttonDelete->SetIsVisible(true);
+-        if (setEditFocus && ew->editContents->IsVisible()) {
++
++        if (focus == EditAnnotFocus::Edit) {
++            HwndSetFocus(ew->editContents->hwnd);
++            ew->editContents->SelectAll();
++        } else if (focus == EditAnnotFocus::List) {
++            HwndSetFocus(ew->listBox->hwnd);
++        } else if (isNew && annot->type == AnnotationType::FreeText) {
+             HwndSetFocus(ew->editContents->hwnd);
+-            ew->editContents->SetCursorPositionAtEnd();
++            // ew->editContents->SetCursorPositionAtEnd();
+             ew->editContents->SelectAll();
++        } else {
++            HwndSetFocus(ew->listBox->hwnd);
+         }
+-    } else {
+-        HwndSetFocus(ew->listBox->hwnd);
+     }
+ 
+     // TODO: get from client size
+@@ -887,7 +954,7 @@ static void ButtonEmbedAttachment(EditAnnotationsWindow* ew) {
+     MessageBoxNYI(ew->hwnd);
+ }
+ 
+-void SetSelectedAnnotation(WindowTab* tab, Annotation* annot, bool setEditFocus) {
++void SetSelectedAnnotation(WindowTab* tab, Annotation* annot, bool isNew, EditAnnotFocus focus) {
+     // when we delete an annotation we automatically pick one to
+     // set as selected and it might end up as currently selected
+     // we still want to redraw to not show deleted annotation
+@@ -904,7 +971,7 @@ void SetSelectedAnnotation(WindowTab* tab, Annotation* annot, bool setEditFocus)
+     auto ew = tab->editAnnotsWindow;
+     // go to page with a given annotations before triggering repaint
+     if (ew) {
+-        UpdateUIForSelectedAnnotation(ew, annot, setEditFocus);
++        UpdateUIForSelectedAnnotation(ew, annot, isNew, focus);
+         HwndMakeVisible(ew->hwnd);
+     }
+     MainWindowRerender(win);
+@@ -942,7 +1009,7 @@ void EditAnnotationsWindow::ListBoxSelectionChanged() {
+         return;
+     }
+     Annotation* annot = annotations.at(itemNo);
+-    SetSelectedAnnotation(tab, annot, false);
++    SetSelectedAnnotation(tab, annot);
+ }
+ 
+ static UINT_PTR gMainWindowRerenderTimer = 0;
+@@ -1108,7 +1175,7 @@ static void CreateMainLayout(EditAnnotationsWindow* ew) {
+     }
+ 
+     {
+-        auto w = CreateStatic(parent, "Text Font:");
++        auto w = CreateStatic(parent, _TRA("Text Font:"));
+         w->SetInsetsPt(8, 0, 0, 0);
+         ew->staticTextFont = w;
+         vbox->AddChild(w);
+@@ -1335,7 +1402,7 @@ static void CreateMainLayout(EditAnnotationsWindow* ew) {
+     {
+         Button::CreateArgs args;
+         args.parent = parent;
+-        args.text = "Save...";
++        args.text = _TRA("Save...");
+         args.font = fnt;
+         args.isRtl = IsUIRtl();
+ 
+@@ -1352,7 +1419,7 @@ static void CreateMainLayout(EditAnnotationsWindow* ew) {
+     {
+         Button::CreateArgs args;
+         args.parent = parent;
+-        args.text = "Embed...";
++        args.text = _TRA("Embed...");
+         args.font = fnt;
+         args.isRtl = IsUIRtl();
+ 
+@@ -1369,7 +1436,7 @@ static void CreateMainLayout(EditAnnotationsWindow* ew) {
+     {
+         Button::CreateArgs args;
+         args.parent = parent;
+-        args.text = _TRN("Delete Annotation");
++        args.text = _TRA("Delete Annotation");
+         args.font = fnt;
+         args.isRtl = IsUIRtl();
+ 
+@@ -1434,9 +1501,9 @@ static void CreateMainLayout(EditAnnotationsWindow* ew) {
+     HidePerAnnotControls(ew);
+ }
+ 
+-void ShowEditAnnotationsWindow(WindowTab* tab) {
+-    auto dm = tab ? tab->AsFixed() : nullptr;
+-    auto engine = dm ? dm->GetEngine() : nullptr;
++void ShowEditAnnotationsWindow(WindowTab* tab, Annotation* annot, EditAnnotFocus focus) {
++    if (!tab) return;
++    auto engine = tab->GetEngine();
+     auto canAnnotate = EngineSupportsAnnotations(engine);
+     if (!canAnnotate) {
+         ReportDebugIf(true);
+@@ -1444,7 +1511,14 @@ void ShowEditAnnotationsWindow(WindowTab* tab) {
+     }
+     EditAnnotationsWindow* ew = tab->editAnnotsWindow;
+     if (ew) {
++        bool isNew = annot != ew->tab->win->annotationUnderCursor;
+         HwndMakeVisible(ew->hwnd);
++        SetForegroundWindow(ew->hwnd);
++        if (ew->listBox && ew->listBox->model->ItemsCount() > 0) {
++            HwndSetFocus(ew->listBox->hwnd);
++        }
++        if (!annot) return;
++        SetSelectedAnnotation(tab, annot, isNew, focus);
+         return;
+     }
+     ew = new EditAnnotationsWindow();
+@@ -1504,10 +1578,11 @@ void ShowEditAnnotationsWindow(WindowTab* tab) {
+         Rect r = ShiftRectToWorkArea(lastPos, ew->hwnd, true);
+         SetWindowPos(ew->hwnd, nullptr, r.x, r.y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+     }
+-    Annotation* annot = ew->tab->selectedAnnotation;
++    if (!annot) annot = ew->tab->selectedAnnotation;
+     ew->skipGoToPage = (annot != nullptr);
+     if (annot) {
+-        UpdateUIForSelectedAnnotation(ew, annot, true);
++        bool isNew = annot != ew->tab->win->annotationUnderCursor;
++        SetSelectedAnnotation(tab, annot, isNew, focus);
+     }
+     if (UseDarkModeLib()) {
+         DarkMode::setDarkWndNotifySafe(ew->hwnd);
+diff --git a/src/EngineCreate.cpp b/src/EngineCreate.cpp
+index 9d54dce5f..639372ff0 100644
+--- a/src/EngineCreate.cpp
++++ b/src/EngineCreate.cpp
+@@ -135,7 +135,7 @@ static EngineBase* CreateEngineForKind(Kind kind, const char* path, PasswordUI*
+         return engine;
+     }
+     if (kind == kindFileHTML) {
+-        engine = CreateEnginePdbFromFile(path);
++        engine = CreateEngineHtmlFromFile(path);
+         return engine;
+     }
+     return nullptr;
+diff --git a/src/EngineDjVu.cpp b/src/EngineDjVu.cpp
+index 43ed0cebf..de06a1697 100644
+--- a/src/EngineDjVu.cpp
++++ b/src/EngineDjVu.cpp
+@@ -127,9 +127,11 @@ struct DjVuContext {
+     ddjvu_context_t* ctx = nullptr;
+     int refCount = 1;
+     CRITICAL_SECTION lock;
++    CRITICAL_SECTION spinLock;
+ 
+     DjVuContext() {
+         InitializeCriticalSection(&lock);
++        InitializeCriticalSection(&spinLock);
+         ctx = ddjvu_context_create("DjVuEngine");
+         // reset the locale to "C" as most other code expects
+         setlocale(LC_ALL, "C");
+@@ -148,8 +150,9 @@ struct DjVuContext {
+         EnterCriticalSection(&lock);
+         ReportIf(refCount <= 0);
+         --refCount;
++        int res = refCount;
+         LeaveCriticalSection(&lock);
+-        return refCount;
++        return res;
+     }
+ 
+     ~DjVuContext() {
+@@ -159,6 +162,7 @@ struct DjVuContext {
+         }
+         LeaveCriticalSection(&lock);
+         DeleteCriticalSection(&lock);
++        DeleteCriticalSection(&spinLock);
+     }
+ 
+     void SpinMessageLoop(bool wait = true) const {
+@@ -179,6 +183,20 @@ struct DjVuContext {
+         }
+     }
+ 
++    // temporarily release the lock and process any pending libdjvu messages.
++    // spinLock serializes message processing so only one thread peeks/pops
++    // at a time, preventing use-after-free on the returned message pointer.
++    // uses non-blocking peek to avoid two threads both blocking inside
++    // GMonitor::wait() on the same ddjvu_context, which corrupts monitor state
++    void SpinMessageLoopWithUnlock() {
++        LeaveCriticalSection(&lock);
++        EnterCriticalSection(&spinLock);
++        SpinMessageLoop(false);
++        LeaveCriticalSection(&spinLock);
++        Sleep(10);
++        EnterCriticalSection(&lock);
++    }
++
+     ddjvu_document_t* OpenFile(const char* fileName) {
+         ScopedCritSec scope(&lock);
+         // TODO: libdjvu sooner or later crashes inside its caching code; cf.
+@@ -463,7 +481,7 @@ bool EngineDjVu::FinishLoading() {
+     ScopedCritSec scope(&gDjVuContext->lock);
+ 
+     while (!ddjvu_document_decoding_done(doc)) {
+-        gDjVuContext->SpinMessageLoop();
++        gDjVuContext->SpinMessageLoopWithUnlock();
+     }
+ 
+     if (ddjvu_document_decoding_error(doc)) {
+@@ -485,7 +503,7 @@ bool EngineDjVu::FinishLoading() {
+             ddjvu_status_t status;
+             ddjvu_pageinfo_t info;
+             while ((status = ddjvu_document_get_pageinfo(doc, i, &info)) < DDJVU_JOB_OK) {
+-                gDjVuContext->SpinMessageLoop();
++                gDjVuContext->SpinMessageLoopWithUnlock();
+             }
+             if (DDJVU_JOB_OK == status) {
+                 DjVuPageInfo* pi = pages[i];
+@@ -498,7 +516,7 @@ bool EngineDjVu::FinishLoading() {
+     }
+ 
+     while ((outline = ddjvu_document_get_outline(doc)) == miniexp_dummy) {
+-        gDjVuContext->SpinMessageLoop();
++        gDjVuContext->SpinMessageLoopWithUnlock();
+     }
+     if (!miniexp_consp(outline) || miniexp_car(outline) != miniexp_symbol("bookmarks")) {
+         ddjvu_miniexp_release(doc, outline);
+@@ -510,7 +528,7 @@ bool EngineDjVu::FinishLoading() {
+         ddjvu_status_t status;
+         ddjvu_fileinfo_s info;
+         while ((status = ddjvu_document_get_fileinfo(doc, i, &info)) < DDJVU_JOB_OK) {
+-            gDjVuContext->SpinMessageLoop();
++            gDjVuContext->SpinMessageLoopWithUnlock();
+         }
+         if (DDJVU_JOB_OK == status && info.type == 'P' && info.pageno >= 0) {
+             fileInfos.Append(info);
+@@ -558,7 +576,12 @@ RenderedBitmap* EngineDjVu::CreateRenderedBitmap(const char* bmpData, Size size,
+ }
+ 
+ RenderedBitmap* EngineDjVu::RenderPage(RenderPageArgs& args) {
+-    ScopedCritSec scope(&gDjVuContext->lock);
++    ddjvu_page_t* page = nullptr;
++    ddjvu_format_t* fmt = nullptr;
++    RenderedBitmap* bmp = nullptr;
++
++    EnterCriticalSection(&gDjVuContext->lock);
++
+     auto pageRect = args.pageRect;
+     auto zoom = args.zoom;
+     auto pageNo = args.pageNo;
+@@ -568,14 +591,17 @@ RenderedBitmap* EngineDjVu::RenderPage(RenderPageArgs& args) {
+     Rect full = Transform(PageMediabox(pageNo), pageNo, zoom, rotation).Round();
+     screen = full.Intersect(screen);
+ 
+-    ddjvu_page_t* page = ddjvu_page_create_by_pageno(doc, pageNo - 1);
++    page = ddjvu_page_create_by_pageno(doc, pageNo - 1);
+     if (!page) {
++        LeaveCriticalSection(&gDjVuContext->lock);
+         return nullptr;
+     }
+     while (!ddjvu_page_decoding_done(page)) {
+-        gDjVuContext->SpinMessageLoop();
++        gDjVuContext->SpinMessageLoopWithUnlock();
+     }
+     if (ddjvu_page_decoding_error(page)) {
++        LeaveCriticalSection(&gDjVuContext->lock);
++        ddjvu_page_release(page);
+         return nullptr;
+     }
+ 
+@@ -603,19 +629,13 @@ RenderedBitmap* EngineDjVu::RenderPage(RenderPageArgs& args) {
+ 
+     bool isBitonal = DDJVU_PAGETYPE_BITONAL == ddjvu_page_get_type(page);
+     ddjvu_format_style_t style = isBitonal ? DDJVU_FORMAT_GREY8 : DDJVU_FORMAT_BGR24;
+-    ddjvu_format_t* fmt = ddjvu_format_create(style, 0, nullptr);
+-
+-    defer {
+-        ddjvu_format_release(fmt);
+-        ddjvu_page_release(page);
+-    };
++    fmt = ddjvu_format_create(style, 0, nullptr);
+ 
+     int topToBottom = TRUE;
+     ddjvu_format_set_row_order(fmt, topToBottom);
+     ddjvu_rect_t prect = {full.x, full.y, (uint)full.dx, (uint)full.dy};
+     ddjvu_rect_t rrect = {screen.x, 2 * full.y - screen.y + full.dy - screen.dy, (uint)screen.dx, (uint)screen.dy};
+ 
+-    RenderedBitmap* bmp = nullptr;
+     size_t bytesPerPixel = isBitonal ? 1 : 3;
+     size_t dx = (size_t)screen.dx;
+     size_t dy = (size_t)screen.dy;
+@@ -623,6 +643,9 @@ RenderedBitmap* EngineDjVu::RenderPage(RenderPageArgs& args) {
+     size_t nBytes = stride * (dy + 5);
+     char* bmpData = (char*)calloc(nBytes, 1);
+     if (!bmpData) {
++        LeaveCriticalSection(&gDjVuContext->lock);
++        ddjvu_format_release(fmt);
++        ddjvu_page_release(page);
+         return nullptr;
+     }
+ 
+@@ -636,22 +659,32 @@ RenderedBitmap* EngineDjVu::RenderPage(RenderPageArgs& args) {
+     bmp = CreateRenderedBitmap(bmpData, screen.Size(), isBitonal);
+     free(bmpData);
+ 
++    // release the lock before releasing djvu objects to avoid deadlock:
++    // ddjvu_page_release can trigger DjVuFile::~DjVuFile -> GMonitor::~GMonitor
++    // which acquires libdjvu internal locks
++    LeaveCriticalSection(&gDjVuContext->lock);
++    ddjvu_format_release(fmt);
++    ddjvu_page_release(page);
++
+     return bmp;
+ }
+ 
+ RectF EngineDjVu::PageContentBox(int pageNo, RenderTarget) {
+-    ScopedCritSec scope(&gDjVuContext->lock);
++    EnterCriticalSection(&gDjVuContext->lock);
+ 
+     RectF pageRc = PageMediabox(pageNo);
+     ddjvu_page_t* page = ddjvu_page_create_by_pageno(doc, pageNo - 1);
+     if (!page) {
++        LeaveCriticalSection(&gDjVuContext->lock);
+         return pageRc;
+     }
+ 
+     while (!ddjvu_page_decoding_done(page)) {
+-        gDjVuContext->SpinMessageLoop();
++        gDjVuContext->SpinMessageLoopWithUnlock();
+     }
+     if (ddjvu_page_decoding_error(page)) {
++        LeaveCriticalSection(&gDjVuContext->lock);
++        ddjvu_page_release(page);
+         return pageRc;
+     }
+     ddjvu_page_set_rotation(page, DDJVU_ROTATE_0);
+@@ -659,11 +692,6 @@ RectF EngineDjVu::PageContentBox(int pageNo, RenderTarget) {
+     // render the page in 8-bit grayscale up to 250x250 px in size
+     ddjvu_format_t* fmt = ddjvu_format_create(DDJVU_FORMAT_GREY8, 0, nullptr);
+ 
+-    defer {
+-        ddjvu_format_release(fmt);
+-        ddjvu_page_release(page);
+-    };
+-
+     ddjvu_format_set_row_order(fmt, /* top_to_bottom */ TRUE);
+     float zoom = std::min(std::min(250.0f / pageRc.dx, 250.0f / pageRc.dy), 1.0f);
+     Rect full = RectF(0, 0, pageRc.dx * zoom, pageRc.dy * zoom).Round();
+@@ -672,11 +700,20 @@ RectF EngineDjVu::PageContentBox(int pageNo, RenderTarget) {
+ 
+     char* bmpData = AllocArrayTemp<char>(full.dx * full.dy + 1);
+     if (!bmpData) {
++        // release the lock before releasing djvu objects to avoid deadlock:
++        // ddjvu_page_release can trigger DjVuFile::~DjVuFile -> GMonitor::~GMonitor
++        // which acquires libdjvu internal locks
++        LeaveCriticalSection(&gDjVuContext->lock);
++        ddjvu_format_release(fmt);
++        ddjvu_page_release(page);
+         return pageRc;
+     }
+ 
+     int ok = ddjvu_page_render(page, DDJVU_RENDER_MASKONLY, &prect, &rrect, fmt, full.dx, bmpData);
+     if (!ok) {
++        LeaveCriticalSection(&gDjVuContext->lock);
++        ddjvu_format_release(fmt);
++        ddjvu_page_release(page);
+         return pageRc;
+     }
+ 
+@@ -716,6 +753,13 @@ RectF EngineDjVu::PageContentBox(int pageNo, RenderTarget) {
+         pageRc = ToRectF(content.Round());
+     }
+ 
++    // release the lock before releasing djvu objects to avoid deadlock:
++    // ddjvu_page_release can trigger DjVuFile::~DjVuFile -> GMonitor::~GMonitor
++    // which acquires libdjvu internal locks
++    LeaveCriticalSection(&gDjVuContext->lock);
++    ddjvu_format_release(fmt);
++    ddjvu_page_release(page);
++
+     return pageRc;
+ }
+ 
+@@ -855,7 +899,7 @@ PageText EngineDjVu::ExtractPageText(int pageNo) {
+ 
+     miniexp_t pagetext;
+     while ((pagetext = ddjvu_document_get_pagetext(doc, pageNo - 1, nullptr)) == miniexp_dummy) {
+-        gDjVuContext->SpinMessageLoop();
++        gDjVuContext->SpinMessageLoopWithUnlock();
+     }
+     if (miniexp_nil == pagetext) {
+         return {};
+@@ -879,7 +923,7 @@ PageText EngineDjVu::ExtractPageText(int pageNo) {
+     ddjvu_status_t status;
+     ddjvu_pageinfo_t info;
+     while ((status = ddjvu_document_get_pageinfo(doc, pageNo - 1, &info)) < DDJVU_JOB_OK) {
+-        gDjVuContext->SpinMessageLoop();
++        gDjVuContext->SpinMessageLoopWithUnlock();
+     }
+     float dpiFactor = 1.0;
+     if (DDJVU_JOB_OK == status) {
+@@ -911,6 +955,9 @@ PageText EngineDjVu::ExtractPageText(int pageNo) {
+ Vec<IPageElement*> EngineDjVu::GetElements(int pageNo) {
+     ReportIf(pageNo < 1 || pageNo > PageCount());
+     auto pi = pages[pageNo - 1];
++
++    ScopedCritSec scope(&gDjVuContext->lock);
++
+     if (pi->gotAllElements) {
+         return pi->allElements;
+     }
+@@ -918,11 +965,10 @@ Vec<IPageElement*> EngineDjVu::GetElements(int pageNo) {
+     auto& els = pi->allElements;
+ 
+     if (pi->annos == miniexp_dummy) {
+-        ScopedCritSec scope(&gDjVuContext->lock);
+         while (pi->annos == miniexp_dummy) {
+             pi->annos = ddjvu_document_get_pageanno(doc, pageNo - 1);
+             if (pi->annos == miniexp_dummy) {
+-                gDjVuContext->SpinMessageLoop();
++                gDjVuContext->SpinMessageLoopWithUnlock();
+             }
+         }
+     }
+@@ -931,14 +977,12 @@ Vec<IPageElement*> EngineDjVu::GetElements(int pageNo) {
+         return els;
+     }
+ 
+-    ScopedCritSec scope(&gDjVuContext->lock);
+-
+     Rect page = PageMediabox(pageNo).Round();
+ 
+     ddjvu_status_t status;
+     ddjvu_pageinfo_t info;
+     while ((status = ddjvu_document_get_pageinfo(doc, pageNo - 1, &info)) < DDJVU_JOB_OK) {
+-        gDjVuContext->SpinMessageLoop();
++        gDjVuContext->SpinMessageLoopWithUnlock();
+     }
+     float dpiFactor = 1.0;
+     if (DDJVU_JOB_OK == status) {
+diff --git a/src/EngineMupdf.cpp b/src/EngineMupdf.cpp
+index 7a331ed74..e6d0e9fe4 100644
+--- a/src/EngineMupdf.cpp
++++ b/src/EngineMupdf.cpp
+@@ -1599,43 +1599,87 @@ struct ContextThreadID {
+ 
+ static Vec<ContextThreadID>* gPerThreadContexts;
+ static CRITICAL_SECTION gPerThreadContextsCs;
++static AtomicInt gEngineCount = 0;
+ 
+-void InitializeEngineMupdf() {
++static void InitializeEngineMupdf() {
++    auto n = AtomicIntInc(&gEngineCount);
++    if (n != 1) return;
+     ReportIf(gPerThreadContexts);
+     InitializeCriticalSection(&gPerThreadContextsCs);
+     gPerThreadContexts = new Vec<ContextThreadID>();
+ }
+ 
++static void DeInitializeEngineMupdf() {
++    auto n = AtomicIntDec(&gEngineCount);
++    if (n > 0) return;
++    ReportIf(n < 0);
++    DeleteCriticalSection(&gPerThreadContextsCs);
++    delete gPerThreadContexts;
++    gPerThreadContexts = nullptr;
++}
++
+ fz_context* GetOrClonePerThreadContext(EngineMupdf* engine, fz_context* ctx) {
+     DWORD threadID = GetCurrentThreadId();
+-    ScopedCritSec cs(&gPerThreadContextsCs);
+-    for (auto& el : *gPerThreadContexts) {
+-        if (el.engine == engine && el.threadID == threadID) {
+-            return el.ctx;
++    {
++        ScopedCritSec cs(&gPerThreadContextsCs);
++        for (auto& el : *gPerThreadContexts) {
++            if (el.engine == engine && el.threadID == threadID) {
++                return el.ctx;
++            }
+         }
+     }
++    // clone context without holding gPerThreadContextsCs to avoid deadlock
++    // with threads that hold fz_locks (e.g. ctxAccess) and then call Ctx()
++    // safe because only current thread can create a context for its own threadID
+     auto newCtx = fz_clone_context(ctx);
+-    ContextThreadID el{engine, newCtx, threadID};
+-    gPerThreadContexts->Append(el);
++    {
++        ScopedCritSec cs(&gPerThreadContextsCs);
++        ContextThreadID el{engine, newCtx, threadID};
++        gPerThreadContexts->Append(el);
++    }
+     return newCtx;
+ }
+ 
+ void ReleasePerThreadContext(EngineMupdf* engine) {
+     DWORD threadID = GetCurrentThreadId();
+-    ScopedCritSec cs(&gPerThreadContextsCs);
+-    auto n = gPerThreadContexts->Size();
+-    for (int i = 0; i < n; i++) {
+-        auto& el = gPerThreadContexts->at(i);
+-        if (el.engine == engine && el.threadID == threadID) {
+-            auto ctx = el.ctx;
+-            fz_drop_context(ctx);
+-            gPerThreadContexts->RemoveAtFast(i);
+-            return;
++    fz_context* ctxToDrop = nullptr;
++    {
++        ScopedCritSec cs(&gPerThreadContextsCs);
++        auto n = gPerThreadContexts->Size();
++        for (int i = 0; i < n; i++) {
++            auto& el = gPerThreadContexts->at(i);
++            if (el.engine == engine && el.threadID == threadID) {
++                ctxToDrop = el.ctx;
++                gPerThreadContexts->RemoveAtFast(i);
++                break;
++            }
++        }
++    }
++    if (ctxToDrop) {
++        fz_drop_context(ctxToDrop);
++    }
++}
++
++// Release all per-thread contexts for a given engine (called from destructor)
++static void ReleaseAllPerThreadContexts(EngineMupdf* engine) {
++    Vec<fz_context*> ctxsToDrop;
++    {
++        ScopedCritSec cs(&gPerThreadContextsCs);
++        for (int i = (int)gPerThreadContexts->Size() - 1; i >= 0; i--) {
++            auto& el = gPerThreadContexts->at(i);
++            if (el.engine == engine) {
++                ctxsToDrop.Append(el.ctx);
++                gPerThreadContexts->RemoveAtFast(i);
++            }
+         }
+     }
++    for (auto ctx : ctxsToDrop) {
++        fz_drop_context(ctx);
++    }
+ }
+ 
+ EngineMupdf::EngineMupdf() {
++    InitializeEngineMupdf();
+     kind = kindEngineMupdf;
+     defaultExt = str::Dup(".pdf");
+     fileDPI = 72.0f;
+@@ -1657,13 +1701,14 @@ EngineMupdf::EngineMupdf() {
+ }
+ 
+ fz_context* EngineMupdf::Ctx() const {
+-    return _ctx;
++    return GetOrClonePerThreadContext(const_cast<EngineMupdf*>(this), _ctx);
+ }
+ 
+ EngineMupdf::~EngineMupdf() {
+     EnterCriticalSection(&pagesAccess);
+ 
+-    auto ctx = Ctx();
++    ReleaseAllPerThreadContexts(this);
++    auto ctx = _ctx;
+     for (FzPageInfo* pi : pages) {
+         DeleteVecMembers(pi->links);
+         DeleteVecMembers(pi->autoLinks);
+@@ -1701,6 +1746,8 @@ EngineMupdf::~EngineMupdf() {
+     }
+     LeaveCriticalSection(&pagesAccess);
+     DeleteCriticalSection(&pagesAccess);
++
++    DeInitializeEngineMupdf();
+ }
+ 
+ class PasswordCloner : public PasswordUI {
+@@ -2850,6 +2897,8 @@ FzPageInfo* EngineMupdf::GetFzPageInfo(int pageNo, bool loadQuick, fz_cookie* co
+ }
+ 
+ RectF EngineMupdf::PageMediabox(int pageNo) {
++    ReportIf(pageNo < 1 || pageNo > pageCount);
++    if (pageNo < 1 || pageNo > pageCount) return {};
+     FzPageInfo* pi = pages[pageNo - 1];
+     return pi->mediabox;
+ }
+diff --git a/src/FileHistory.cpp b/src/FileHistory.cpp
+index 7d17f8b38..32a92afa3 100644
+--- a/src/FileHistory.cpp
++++ b/src/FileHistory.cpp
+@@ -105,7 +105,7 @@ FileState* FileHistory::FindByName(const char* filePath, size_t* idxOut) const {
+         FileState* fs = states->at(i);
+         if (str::EqI(fs->filePath, filePath)) {
+             idxExact = i;
+-        } else if (str::EndsWithI(fs->filePath, fileName)) {
++        } else if (str::EqI(path::GetBaseNameTemp(fs->filePath), fileName)) {
+             idxFileNameMatch = i;
+         }
+     }
+diff --git a/src/Flags.cpp b/src/Flags.cpp
+old mode 100644
+new mode 100755
+diff --git a/src/HomePage.cpp b/src/HomePage.cpp
+index b1927f896..6b7e3fdaf 100644
+--- a/src/HomePage.cpp
++++ b/src/HomePage.cpp
+@@ -606,7 +606,6 @@ void DrawAboutPage(MainWindow* win, HDC hdc) {
+ 
+ /* alternate static page to display when no document is loaded */
+ 
+-constexpr int kOpenDocumentYShift = 4;
+ constexpr int kThumbsMaxCols = 5;
+ constexpr int kThumbsSeparatorDy = 2;
+ constexpr int kThumbsBorderDx = 1;
+@@ -699,6 +698,8 @@ static Promote* ParsePromote(const char* s) {
+     return first;
+ }
+ 
++constexpr int kOpenDocumentYShift = 7;
++
+ void LayoutHomePage(HomePageLayout& l) {
+     l.promote = ParsePromote(promoteBuiltIn);
+ 
+diff --git a/src/HtmlFormatter.cpp b/src/HtmlFormatter.cpp
+index da175580d..eda000856 100644
+--- a/src/HtmlFormatter.cpp
++++ b/src/HtmlFormatter.cpp
+@@ -461,13 +461,20 @@ static RectF RectFUnion(RectF& r1, RectF& r2) {
+ }
+ 
+ void HtmlFormatter::UpdateLinkBboxes(HtmlPage* page) {
+-    for (DrawInstr& i : page->instructions) {
+-        if (DrawInstrType::LinkStart != i.type) {
++    Vec<DrawInstr>& a = page->instructions;
++    size_t n = a.size();
++    for (size_t i = 0; i < n; i++) {
++        DrawInstr& instr = a[i];
++        if (DrawInstrType::LinkStart != instr.type) {
+             continue;
+         }
+-        for (DrawInstr* i2 = &i + 1; i2->type != DrawInstrType::LinkEnd; i2++) {
+-            if (IsVisibleDrawInstr(*i2)) {
+-                i.bbox = RectFUnion(i.bbox, i2->bbox);
++        for (size_t j = i + 1; j < n; j++) {
++            DrawInstr& linkInstr = a[j];
++            if (DrawInstrType::LinkEnd != linkInstr.type) {
++                continue;
++            }
++            if (IsVisibleDrawInstr(linkInstr)) {
++                instr.bbox = RectFUnion(instr.bbox, linkInstr.bbox);
+             }
+         }
+     }
+diff --git a/src/Installer.cpp b/src/Installer.cpp
+index 4fa4bc757..ebe00dacb 100644
+--- a/src/Installer.cpp
++++ b/src/Installer.cpp
+@@ -1161,6 +1161,17 @@ int RunInstaller() {
+         StartLogToFile(installerLogPath, removeLog);
+     }
+     logf("------------- Starting SumatraPDF installation\n");
++    {
++        DWORD parentPid = 0;
++        TempStr path = GetParentProcessPath(&parentPid);
++        if (path) {
++            logf("Parent process: pid=%d, path='%s'\n", (int)parentPid, path);
++        } else if (parentPid != 0) {
++            logf("Parent process: pid=%d, path unknown\n", (int)parentPid);
++        } else {
++            logf("Parent process: unknown\n");
++        }
++    }
+     if (!IsProcessAndOsArchSame()) {
+         logfa("quitting because !IsProcessAndOsArchSame()\n");
+         MismatchedOSDialog(nullptr);
+@@ -1194,16 +1205,19 @@ int RunInstaller() {
+         gCliNew.installDir = str::Dup(dir);
+     }
+     char* cmdLine = ToUtf8Temp(GetCommandLineW());
+-    logf("Running'%s', cmdLine: '%s', installing into dir '%s'\n", GetSelfExePathTemp(), cmdLine, gCliNew.installDir);
++    logf("RunInstaller: '%s', cmdLine: '%s', installing into dir '%s'\n", GetSelfExePathTemp(), cmdLine,
++         gCliNew.installDir);
+ 
+     int ret = 0;
+ 
+     // restart as admin if necessary. in non-silent mode it happens after clicking
+     // Install button
+-    bool requiresSilentElevation = gCli->silent || gCli->fastInstall;
++    bool requiresSilentElevation = gCli->silent || gCli->fastInstall || gCli->runInstallNow;
+     bool isElevated = IsProcessRunningElevated();
++    logf("RunInstaller: requiresSilentElevation: %d, isElevated: %d\n", (int)requiresSilentElevation, (int)isElevated);
+     if (requiresSilentElevation && !isElevated) {
+         bool needsElevation = gCliNew.allUsers || gPrevInstall.allUsers;
++        logf("RunInstaller: needsElevation: %d\n", (int)needsElevation);
+         if (needsElevation) {
+             logf(
+                 "Restarting as elevated: gCli->silent: %d, gCli->fastInstall: %d, isElevated: %d, gCli->allUsers: %d, "
+diff --git a/src/MainWindow.cpp b/src/MainWindow.cpp
+index 72e83755c..daa1d55b3 100644
+--- a/src/MainWindow.cpp
++++ b/src/MainWindow.cpp
+@@ -772,6 +772,13 @@ void HighlightTab(MainWindow* win, WindowTab* tab) {
+     win->tabsCtrl->SetHighlighted(idx);
+ }
+ 
++HWND GetHwndForNotification() {
++    if (gWindows.Size() == 0) {
++        return nullptr;
++    }
++    return gWindows[0]->hwndCanvas;
++}
++
+ bool AppIsValidHWND(HWND hwnd) {
+     MainWindow* win = FindMainWindowByHwnd(hwnd);
+     return win && !win->isBeingClosed;
+diff --git a/src/Menu.cpp b/src/Menu.cpp
+index a7cf9531b..f6c4df8c9 100644
+--- a/src/Menu.cpp
++++ b/src/Menu.cpp
+@@ -1806,7 +1806,7 @@ void OnWindowContextMenu(MainWindow* win, int x, int y) {
+         // change from generic "Edit Annotations" to more specific
+         // "Edit ${annotType} Annotation"
+         TempStr t = AnnotationReadableNameTemp(ctx->annotationUnderCursor->type);
+-        TempStr s = str::FormatTemp(_TRN("Edit %s Annotation"), t);
++        TempStr s = str::FormatTemp(_TRA("Edit %s Annotation"), t);
+         MenuSetText(popup, CmdEditAnnotations, s);
+     }
+ 
+@@ -1857,13 +1857,21 @@ void OnWindowContextMenu(MainWindow* win, int x, int y) {
+         return;
+     }
+ 
++    // handle in FrameOnCommand() in SumatraPDF.cpp
++    LPARAM lpArg = MAKELPARAM(x, y);
+     AnnotationType annotType = CmdIdToAnnotationType(cmdId);
+     if (annotType != AnnotationType::Unknown) {
+-        // handle in FrameOnCommand() in SumatraPDF.cpp
+-        LPARAM lpArg = MAKELPARAM(x, y);
+         HwndSendCommand(win->hwndFrame, cmdId, lpArg);
+         return;
+     }
++    switch (cmdId) {
++        case CmdEditAnnotations:
++        case CmdDeleteAnnotation: {
++            HwndSendCommand(win->hwndFrame, cmdId, lpArg);
++            return;
++        }
++    }
++
+     switch (cmdId) {
+         case CmdCopySelection:
+         case CmdTranslateSelectionWithGoogle:
+@@ -1884,9 +1892,7 @@ void OnWindowContextMenu(MainWindow* win, int x, int y) {
+         case CmdSaveAnnotations:
+         case CmdSaveAnnotationsNewFile:
+         case CmdFavoriteAdd:
+-        case CmdEditAnnotations:
+-        case CmdToggleFullscreen:
+-        case CmdDeleteAnnotation: {
++        case CmdToggleFullscreen: {
+             // handle in FrameOnCommand() in SumatraPDF.cpp
+             HwndSendCommand(win->hwndFrame, cmdId);
+         } break;
+diff --git a/src/Notifications.cpp b/src/Notifications.cpp
+index 44451cc86..f646903b2 100644
+--- a/src/Notifications.cpp
++++ b/src/Notifications.cpp
+@@ -27,6 +27,16 @@ using Gdiplus::Graphics;
+ using Gdiplus::Pen;
+ using Gdiplus::SolidBrush;
+ 
++// defined in MainWindow.cpp
++HWND GetHwndForNotification();
++
++struct StrNode {
++    StrNode* next;
++    const char* s;
++};
++
++static StrNode* gDelayedNotifications = nullptr;
++
+ Kind kNotifCursorPos = "cursorPosHelper";
+ Kind kNotifActionResponse = "responseToAction";
+ Kind kNotifPageInfo = "pageInfoHelper";
+@@ -37,6 +47,7 @@ constexpr int kPadding = 6;
+ constexpr int kTopLeftMargin = 8;
+ 
+ constexpr UINT_PTR kNotifTimerTimeoutId = 1;
++constexpr UINT_PTR kNotifTimerDelayId = 2;
+ 
+ struct NotificationWnd : Wnd {
+     NotificationWnd() = default;
+@@ -56,6 +67,7 @@ struct NotificationWnd : Wnd {
+     int timeoutMs = kNotifDefaultTimeOut; // 0 means no timeout
+ 
+     bool highlight = false; // TODO: should really be a color
++    bool noClose = false;
+ 
+     NotificationWndRemoved wndRemovedCb;
+ 
+@@ -67,39 +79,49 @@ struct NotificationWnd : Wnd {
+     float shrinkLimit = 1.0f;
+ 
+     int progressPerc = -1;
++    int delayInMs = 0;
++    UINT_PTR delayTimerId = 0;
+ 
+     Rect rTxt;
+     Rect rClose;
+     Rect rProgress;
+ };
+ 
+-Vec<NotificationWnd*> gNotifs;
++constexpr int kMaxNotifs = 128;
++static NotificationWnd* gNotifs[kMaxNotifs];
++static int gNotifsCount = 0;
+ 
+-static void GetForHwnd(HWND hwnd, Vec<NotificationWnd*>& v) {
+-    for (auto* wnd : gNotifs) {
++static int GetForHwnd(HWND hwnd, NotificationWnd* wnds[kMaxNotifs]) {
++    int n = 0;
++    for (int i = 0; i < gNotifsCount; i++) {
++        auto* wnd = gNotifs[i];
+         HWND parent = HwndGetParent(wnd->hwnd);
+         if (parent == hwnd) {
+-            v.Append(wnd);
++            wnds[n++] = wnd;
+         }
+     }
++    return n;
+ }
+ 
+-// notification can be removed due to a timeout or manual closing
+-bool IsNotificationValid(NotificationWnd* wnd) {
+-    bool exists = gNotifs.Contains(wnd);
+-    return exists;
++static int NotificationIndexOf(NotificationWnd* wnd) {
++    for (int i = 0; i < gNotifsCount; i++) {
++        if (gNotifs[i] == wnd) {
++            return i;
++        }
++    }
++    return -1;
+ }
+ 
+-static void GetForSameHwnd(NotificationWnd* wnd, Vec<NotificationWnd*>& v) {
++static int GetForSameHwnd(NotificationWnd* wnd, NotificationWnd* wnds[kMaxNotifs]) {
+     HWND parent = GetParent(wnd->hwnd);
+-    GetForHwnd(parent, v);
++    return GetForHwnd(parent, wnds);
+ }
+ 
+ void RelayoutNotifications(HWND hwnd) {
+-    Vec<NotificationWnd*> wnds;
++    NotificationWnd* wnds[kMaxNotifs];
+     HWND parent = HwndGetParent(hwnd);
+-    GetForHwnd(parent, wnds);
+-    if (wnds.IsEmpty()) {
++    int nWnds = GetForHwnd(parent, wnds);
++    if (nWnds == 0) {
+         return;
+     }
+ 
+@@ -109,7 +131,12 @@ void RelayoutNotifications(HWND hwnd) {
+     int topLeftMargin = DpiScale(hwndCanvas, kTopLeftMargin);
+     int dyPadding = DpiScale(hwndCanvas, kPadding);
+     int y = topLeftMargin;
+-    for (NotificationWnd* wnd : wnds) {
++    for (int i = 0; i < nWnds; i++) {
++        NotificationWnd* wnd = wnds[i];
++        if (wnd->delayTimerId != 0) {
++            // still in delay period, not yet visible
++            continue;
++        }
+         Rect rect = WindowRect(wnd->hwnd);
+         rect = MapRectToWindow(rect, HWND_DESKTOP, hwndCanvas);
+         if (IsUIRtl()) {
+@@ -125,10 +152,15 @@ void RelayoutNotifications(HWND hwnd) {
+ }
+ 
+ static void NotifsRemoveNotification(NotificationWnd* wnd) {
+-    int pos = gNotifs.Remove(wnd);
++    int pos = NotificationIndexOf(wnd);
+     if (pos < 0) {
+         return;
+     }
++    gNotifsCount--;
++    if (pos < gNotifsCount) {
++        gNotifs[pos] = gNotifs[gNotifsCount];
++    }
++    gNotifs[gNotifsCount] = nullptr;
+     RelayoutNotifications(wnd->hwnd);
+     delete wnd;
+ }
+@@ -139,10 +171,17 @@ int GetWndX(NotificationWnd* wnd) {
+     return rect.x;
+ }
+ 
+-NotificationWnd::~NotificationWnd() {}
++NotificationWnd::~NotificationWnd() {
++    if (delayTimerId != 0) {
++        KillTimer(hwnd, delayTimerId);
++        delayTimerId = 0;
++    }
++}
+ 
+ HWND NotificationWnd::Create(const NotificationCreateArgs& args) {
+     highlight = args.warning;
++    noClose = args.noClose;
++    ReportIf(noClose && args.timeoutMs <= 0);
+     shrinkLimit = args.shrinkLimit;
+     if (shrinkLimit < 0.2f) {
+         ReportIf(shrinkLimit < 0.2f);
+@@ -167,15 +206,21 @@ HWND NotificationWnd::Create(const NotificationCreateArgs& args) {
+         cargs.font = GetAppBiggerFont();
+     }
+     cargs.pos = Rect(0, 0, 0, 0);
++    cargs.visible = args.delayInMs == 0;
+     cargs.isRtl = IsUIRtl();
+ 
+     CreateCustom(cargs);
+ 
+     Layout(args.msg);
+-    ShowWindow(hwnd, SW_SHOW);
+-
+-    if (timeoutMs != 0) {
+-        SetTimer(hwnd, kNotifTimerTimeoutId, timeoutMs, nullptr);
++    delayInMs = args.delayInMs;
++    if (delayInMs > 0) {
++        // create hidden, will show after delay
++        delayTimerId = SetTimer(hwnd, kNotifTimerDelayId, delayInMs, nullptr);
++    } else {
++        ShowWindow(hwnd, SW_SHOW);
++        if (timeoutMs != 0) {
++            SetTimer(hwnd, kNotifTimerTimeoutId, timeoutMs, nullptr);
++        }
+     }
+     return hwnd;
+ }
+@@ -208,12 +253,16 @@ void NotificationWnd::Layout(const char* message) {
+     int dx = padX + szText.dx + padX;
+     int dy = padY + szText.dy + padY;
+     rTxt = {padX, padY, szText.dx, szText.dy};
+-    int closeDx = DpiScale(hwnd, 16);
+-    int leftMargin = DpiScale(hwnd, kCloseLeftMargin - padX);
+-    rClose = {dx + leftMargin, padY, closeDx, closeDx + 2};
+-
+-    // close button
+-    dx += leftMargin + closeDx + padX;
++    if (!noClose) {
++        int closeDx = DpiScale(hwnd, 16);
++        int leftMargin = DpiScale(hwnd, kCloseLeftMargin - padX);
++        rClose = {dx + leftMargin, padY, closeDx, closeDx + 2};
++        // close button
++        dx += leftMargin + closeDx + padX;
++    } else {
++        rClose = {};
++        dx += padX;
++    }
+     int progressDy = DpiScale(hwnd, kProgressDy);
+     rProgress = {padX, dy, szText.dx, progressDy};
+     if (HasProgress()) {
+@@ -242,7 +291,10 @@ void NotificationWnd::Layout(const char* message) {
+ #endif
+ 
+     // y-center close
+-    rClose.y = ((dy - closeDx) / 2) + 1;
++    if (!noClose) {
++        int closeDx = rClose.dx;
++        rClose.y = ((dy - closeDx) / 2) + 1;
++    }
+ 
+     if (dx == rCurr.dx && dy == rCurr.dy) {
+         return;
+@@ -302,12 +354,14 @@ void NotificationWnd::OnPaint(HDC hdcIn, PAINTSTRUCT* ps) {
+     RECT rTmp = ToRECT(rTxt);
+     HdcDrawText(hdc, text, &rTmp, format);
+ 
+-    Point curPos = HwndGetCursorPos(hwnd);
+-    DrawCloseButtonArgs args;
+-    args.hdc = hdc;
+-    args.r = rClose;
+-    args.isHover = rClose.Contains(curPos);
+-    DrawCloseButton(args);
++    if (!noClose) {
++        Point curPos = HwndGetCursorPos(hwnd);
++        DrawCloseButtonArgs args;
++        args.hdc = hdc;
++        args.r = rClose;
++        args.isHover = rClose.Contains(curPos);
++        DrawCloseButton(args);
++    }
+ #if 0
+     DrawCloseButtonArgs args;
+     args.hdc = hdc;
+@@ -352,7 +406,7 @@ void NotificationWnd::UpdateMessage(const char* msg, int timeoutMs, bool highlig
+ }
+ 
+ bool UpdateNotificationProgress(NotificationWnd* wnd, const char* msg, int perc) {
+-    if (!IsNotificationValid(wnd)) {
++    if (NotificationIndexOf(wnd) < 0) {
+         return false;
+     }
+     ReportIf(perc < 0 || perc > 100);
+@@ -370,6 +424,18 @@ static void NotifDelete(NotificationWnd* wnd) {
+ }
+ 
+ void NotificationWnd::OnTimer(UINT_PTR timerId) {
++    if (timerId == kNotifTimerDelayId) {
++        // delay elapsed, now show the notification
++        KillTimer(hwnd, delayTimerId);
++        delayTimerId = 0;
++        BringWindowToTop(hwnd);
++        ShowWindow(hwnd, SW_SHOW);
++        RelayoutNotifications(hwnd);
++        if (timeoutMs != 0) {
++            SetTimer(hwnd, kNotifTimerTimeoutId, timeoutMs, nullptr);
++        }
++        return;
++    }
+     ReportIf(kNotifTimerTimeoutId != timerId);
+     // TODO a better way to delete myself
+     if (wndRemovedCb.IsValid()) {
+@@ -382,7 +448,7 @@ void NotificationWnd::OnTimer(UINT_PTR timerId) {
+ }
+ 
+ LRESULT NotificationWnd::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+-    if (WM_SETCURSOR == msg) {
++    if (WM_SETCURSOR == msg && !noClose) {
+         Point pt = HwndGetCursorPos(hwnd);
+         if (!pt.IsEmpty() && rClose.Contains(pt)) {
+             SetCursorCached(IDC_HAND);
+@@ -398,7 +464,7 @@ LRESULT NotificationWnd::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+     if (WM_MOUSEMOVE == msg) {
+         HwndScheduleRepaint(hwnd);
+ 
+-        if (IsMouseOverRect(hwnd, rClose)) {
++        if (!noClose && IsMouseOverRect(hwnd, rClose)) {
+             TrackMouseLeave(hwnd);
+         }
+         goto DoDefault;
+@@ -411,7 +477,7 @@ LRESULT NotificationWnd::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+ 
+     if (WM_LBUTTONUP) {
+         Point pt = Point(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+-        if (rClose.Contains(pt)) {
++        if (!noClose && rClose.Contains(pt)) {
+             // TODO a better way to delete myself
+             if (wndRemovedCb.IsValid()) {
+                 auto fn = MkFunc0<NotificationWnd>(NotifRemove, this);
+@@ -428,41 +494,47 @@ DoDefault:
+     return WndProcDefault(hwnd, msg, wp, lp);
+ }
+ 
+-static int NotifsRemoveForGroup(Vec<NotificationWnd*>& wnds, Kind groupId) {
++static int NotifsRemoveForGroup(NotificationWnd** wnds, int nWnds, Kind groupId) {
+     ReportIf(groupId == nullptr);
+-    Vec<NotificationWnd*> toRemove;
+-    for (auto* wnd : wnds) {
+-        if (wnd->groupId == groupId) {
+-            toRemove.Append(wnd);
++    NotificationWnd* toRemove[kMaxNotifs];
++    int nRemove = 0;
++    for (int i = 0; i < nWnds; i++) {
++        if (wnds[i]->groupId == groupId) {
++            toRemove[nRemove++] = wnds[i];
+         }
+     }
+-    for (auto* wnd : toRemove) {
+-        NotifsRemoveNotification(wnd);
++    for (int i = 0; i < nRemove; i++) {
++        NotifsRemoveNotification(toRemove[i]);
+     }
+-    return toRemove.Size();
++    return nRemove;
+ }
+ 
+-static void NotifsAdd(Vec<NotificationWnd*>& wnds, NotificationWnd* wnd, Kind groupId) {
++static bool NotifsAdd(NotificationWnd** wnds, int nWnds, NotificationWnd* wnd, Kind groupId) {
+     bool skipRemove = (groupId == nullptr) || (groupId == kNotifAdHoc);
+     if (!skipRemove) {
+-        NotifsRemoveForGroup(wnds, groupId);
++        NotifsRemoveForGroup(wnds, nWnds, groupId);
++    }
++    if (gNotifsCount >= kMaxNotifs) {
++        return false;
+     }
+     wnd->groupId = groupId;
+-    gNotifs.Append(wnd);
++    gNotifs[gNotifsCount] = wnd;
++    gNotifsCount++;
+     RelayoutNotifications(wnd->hwnd);
++    return true;
+ }
+ 
+-static void NotifsAdd(NotificationWnd* wnd, Kind groupId) {
+-    Vec<NotificationWnd*> wnds;
+-    GetForSameHwnd(wnd, wnds);
+-    NotifsAdd(wnds, wnd, groupId);
++static bool NotifsAdd(NotificationWnd* wnd, Kind groupId) {
++    NotificationWnd* wnds[kMaxNotifs];
++    int nWnds = GetForSameHwnd(wnd, wnds);
++    return NotifsAdd(wnds, nWnds, wnd, groupId);
+ }
+ 
+-NotificationWnd* NotifsGetForGroup(Vec<NotificationWnd*>& wnds, Kind groupId) {
++NotificationWnd* NotifsGetForGroup(NotificationWnd** wnds, int nWnds, Kind groupId) {
+     ReportIf(!groupId);
+-    for (auto* wnd : wnds) {
+-        if (wnd->groupId == groupId) {
+-            return wnd;
++    for (int i = 0; i < nWnds; i++) {
++        if (wnds[i]->groupId == groupId) {
++            return wnds[i];
+         }
+     }
+     return nullptr;
+@@ -477,8 +549,14 @@ NotificationWnd* ShowNotification(const NotificationCreateArgs& args) {
+         delete wnd;
+         return nullptr;
+     }
+-    BringWindowToTop(wnd->hwnd);
+-    NotifsAdd(wnd, args.groupId);
++    if (wnd->delayTimerId == 0) {
++        BringWindowToTop(wnd->hwnd);
++    }
++    bool ok = NotifsAdd(wnd, args.groupId);
++    if (!ok) {
++        delete wnd;
++        return nullptr;
++    }
+     return wnd;
+ }
+ 
+@@ -515,14 +593,55 @@ void RemoveNotification(NotificationWnd* wnd) {
+ }
+ 
+ bool RemoveNotificationsForGroup(HWND hwnd, Kind kind) {
+-    Vec<NotificationWnd*> wnds;
+-    GetForHwnd(hwnd, wnds);
+-    int n = NotifsRemoveForGroup(wnds, kind);
++    NotificationWnd* wnds[kMaxNotifs];
++    int nWnds = GetForHwnd(hwnd, wnds);
++    int n = NotifsRemoveForGroup(wnds, nWnds, kind);
+     return n > 0;
+ }
+ 
+ NotificationWnd* GetNotificationForGroup(HWND hwnd, Kind kind) {
+-    Vec<NotificationWnd*> wnds;
+-    GetForHwnd(hwnd, wnds);
+-    return NotifsGetForGroup(wnds, kind);
++    NotificationWnd* wnds[kMaxNotifs];
++    int nWnds = GetForHwnd(hwnd, wnds);
++    return NotifsGetForGroup(wnds, nWnds, kind);
++}
++
++static StrNode* AllocStrNode(const char* s) {
++    size_t n = str::Len(s) + 1;
++    size_t cbAlloc = sizeof(StrNode) + n;
++    auto* node = (StrNode*)malloc(cbAlloc);
++    char* dst = (char*)node + sizeof(StrNode);
++    memcpy(dst, s, n);
++    node->next = nullptr;
++    node->s = dst;
++    return node;
++}
++
++void MaybeDelayedWarningNotification(const char* fmt, ...) {
++    va_list args;
++    va_start(args, fmt);
++    char* msg = str::FmtV(fmt, args);
++    va_end(args);
++
++    log(msg, false /* always */);
++
++    HWND hwnd = GetHwndForNotification();
++    if (hwnd) {
++        ShowWarningNotification(hwnd, msg, kNotifNoTimeout);
++    } else {
++        StrNode* node = AllocStrNode(msg);
++        ListInsertFront(&gDelayedNotifications, node);
++    }
++    str::Free(msg);
++}
++
++void ShowMaybeDelayedNotifications(HWND hwndParent) {
++    // reverse so notifications show in the order they were added
++    ListReverse(&gDelayedNotifications);
++    StrNode* curr = gDelayedNotifications;
++    while (curr) {
++        ShowWarningNotification(hwndParent, curr->s, kNotifNoTimeout);
++        curr = curr->next;
++    }
++    ListDelete(gDelayedNotifications);
++    gDelayedNotifications = nullptr;
+ }
+diff --git a/src/PdfSync.cpp b/src/PdfSync.cpp
+index 4d15498fa..be00618f7 100644
+--- a/src/PdfSync.cpp
++++ b/src/PdfSync.cpp
+@@ -491,6 +491,44 @@ int Pdfsync::SourceToDoc(const char* srcfilename, int line, int col, int* page,
+     return PDFSYNCERR_NOSYNCPOINT_FOR_LINERECORD;
+ }
+ 
++static bool PathHasNonAscii(const char* s) {
++    for (; *s; s++) {
++        if ((u8)*s > 127) {
++            return true;
++        }
++    }
++    return false;
++}
++
++// copy file to a temp path with ASCII-only name so that
++// gzopen() (which uses fopen() internally) can open it on Windows
++// when the original path has non-ASCII (e.g. CJK) characters
++static TempStr CopyToTempFileIfNeeded(const char* path) {
++    if (!PathHasNonAscii(path)) {
++        return nullptr;
++    }
++    if (!file::Exists(path)) {
++        return nullptr;
++    }
++    // use file::ReadFile which uses CreateFileW (handles Unicode)
++    ByteSlice data = file::ReadFile(path);
++    if (data.IsEmpty()) {
++        return nullptr;
++    }
++    TempStr tempPath = GetTempFilePathTemp("stx");
++    if (!tempPath) {
++        data.Free();
++        return nullptr;
++    }
++    bool ok = file::WriteFile(tempPath, data);
++    data.Free();
++    if (!ok) {
++        return nullptr;
++    }
++    logfa("CopyToTempFileIfNeeded: copied '%s' to '%s'\n", path, tempPath);
++    return tempPath;
++}
++
+ // returns path of ungzipped file
+ TempStr ungzipToFile(char* path) {
+     // to see if we can read when gzopen in synctex_scanner_new_with_output_file cannot
+@@ -505,7 +543,12 @@ TempStr ungzipToFile(char* path) {
+     if (uncompr.IsEmpty()) {
+         return nullptr;
+     }
+-    TempStr destPath = str::JoinTemp(path, ".sum.synctex");
++    // write to a temp file with ASCII-safe path so gzopen() can open it
++    TempStr destPath = GetTempFilePathTemp("stx");
++    if (!destPath) {
++        uncompr.Free();
++        return nullptr;
++    }
+     bool ok = file::WriteFile(destPath, uncompr);
+     uncompr.Free();
+     if (!ok) {
+@@ -530,23 +573,27 @@ int SyncTex::RebuildIndexIfNeeded() {
+ 
+     TempStr syncPathTemp = str::DupTemp(syncFilePath.Get());
+ Repeat:
+-    TempWStr ws = ToWStrTemp(syncPathTemp);
+-    AutoFreeStr pathAnsi = strconv::WStrToAnsi(ws);
+-    scanner = synctex_scanner_new_with_output_file(pathAnsi, nullptr, 1);
++    // try the path directly first (works for ASCII paths and UTF-8 aware builds)
++    scanner = synctex_scanner_new_with_output_file(syncPathTemp, nullptr, 1);
+     if (scanner) {
+-        logfa("synctex_scanner_new_with_output_file: ok for pathAnsi '%s'\n", pathAnsi.Get());
++        logfa("synctex_scanner_new_with_output_file: ok for '%s'\n", syncPathTemp);
+         goto Exit;
+     }
+-    if (!str::Eq(syncPathTemp, pathAnsi)) {
+-        logfa("synctex_scanner_new_with_output_file: retrying for syncFilePath '%s'\n", syncPathTemp);
+-        scanner = synctex_scanner_new_with_output_file(syncPathTemp, nullptr, 1);
+-    }
+-    if (scanner) {
+-        logfa("synctex_scanner_new_with_output_file: ok forsyncFilePath '%s'\n", syncPathTemp);
+-        goto Exit;
++    // if the path has non-ASCII chars, gzopen() (which uses fopen()) can't handle
++    // Unicode paths on Windows; copy the file to an ASCII-safe temp path
++    {
++        TempStr tempPath = CopyToTempFileIfNeeded(syncPathTemp);
++        if (tempPath) {
++            logfa("synctex_scanner_new_with_output_file: retrying with temp copy '%s'\n", tempPath);
++            scanner = synctex_scanner_new_with_output_file(tempPath, nullptr, 1);
++            if (scanner) {
++                logfa("synctex_scanner_new_with_output_file: ok for temp copy '%s'\n", tempPath);
++                goto Exit;
++            }
++        }
+     }
+     if (didRepeat) {
+-        logfa("synctex_scanner_new_with_output_file: failed for '%s'\n", pathAnsi.Get());
++        logfa("synctex_scanner_new_with_output_file: failed for '%s'\n", syncPathTemp);
+         return PDFSYNCERR_SYNCFILE_NOTFOUND;
+     }
+ 
+@@ -555,7 +602,7 @@ Repeat:
+     pathNoExt = path::GetPathNoExtTemp(syncFilePath);
+     pathSyncGz = str::JoinTemp(pathNoExt, ".synctex.gz");
+     if (!file::Exists(pathSyncGz)) {
+-        logfa("synctex_scanner_new_with_output_file: failed for '%s'\n", pathAnsi.Get());
++        logfa("synctex_scanner_new_with_output_file: failed for '%s'\n", syncPathTemp);
+         return PDFSYNCERR_SYNCFILE_NOTFOUND;
+     }
+     fsize = file::GetSize(pathSyncGz);
+@@ -563,7 +610,7 @@ Repeat:
+ 
+     syncPathTemp = ungzipToFile(pathSyncGz);
+     if (!syncPathTemp) {
+-        logfa("SyncTex::RebuildIndexIfNeeded: ungzipToFile('%s') failecd\n", pathSyncGz);
++        logfa("SyncTex::RebuildIndexIfNeeded: ungzipToFile('%s') failed\n", pathSyncGz);
+         goto Exit;
+     }
+     fsize = file::GetSize(syncPathTemp);
+@@ -635,7 +682,6 @@ int SyncTex::SourceToDoc(const char* srcfilename, int line, int col, int* page,
+     logfa("SyncTex::SourceToDoc: '%s', line: %d, col: %d\n", srcfilename, line, col);
+     int res = RebuildIndexIfNeeded();
+     if (res != PDFSYNCERR_SUCCESS) {
+-        ReportIf(true);
+         return res;
+     }
+     ReportIf(!scanner);
+diff --git a/src/Print.cpp b/src/Print.cpp
+old mode 100644
+new mode 100755
+index 5da4e6e65..128ca05de
+--- a/src/Print.cpp
++++ b/src/Print.cpp
+@@ -698,7 +698,7 @@ static void PrintThread(PrintThreadData* ptd) {
+ }
+ 
+ static void PrintToDeviceOnThread(MainWindow* win, PrintData* data) {
+-    ReportIf(win->printThread);
++    AbortPrinting(win);
+     PrintThreadData* threadData = new PrintThreadData(win, data);
+     win->printThread = nullptr;
+     auto fn = MkFunc0(PrintThread, threadData);
+diff --git a/src/RenderCache.cpp b/src/RenderCache.cpp
+index 340616302..b7052301b 100644
+--- a/src/RenderCache.cpp
++++ b/src/RenderCache.cpp
+@@ -57,6 +57,15 @@ RenderCache::~RenderCache() {
+     EnterCriticalSection(&requestAccess);
+     EnterCriticalSection(&cacheAccess);
+ 
++    // wait for shutdown
++    AtomicBoolSet(&shouldExit, true);
++    // wake the thread in case it's waiting on startRendering event
++    SetEvent(startRendering);
++    DWORD res = WaitForSingleObject(renderThread, 5000);
++    if (res == WAIT_TIMEOUT) {
++        logf("RenderCache::WaitForShutdown: thread didn't exit in 5 seconds\n");
++    }
++
+     CloseHandle(renderThread);
+     CloseHandle(startRendering);
+     if (curReq || 0 != requestCount || cacheCount != 0) {
+@@ -71,16 +80,6 @@ RenderCache::~RenderCache() {
+     DeleteCriticalSection(&requestAccess);
+ }
+ 
+-void RenderCache::WaitForShutdown() {
+-    AtomicBoolSet(&shouldExit, true);
+-    // wake the thread in case it's waiting on startRendering event
+-    SetEvent(startRendering);
+-    DWORD res = WaitForSingleObject(renderThread, 5000);
+-    if (res == WAIT_TIMEOUT) {
+-        logf("RenderCache::WaitForShutdown: thread didn't exit in 5 seconds\n");
+-    }
+-}
+-
+ /* Find a bitmap for a page defined by <dm> and <pageNo> and optionally also
+    <rotation> and <zoom> in the cache - call DropCacheEntry when you
+    no longer need a found entry. */
+diff --git a/src/SearchAndDDE.cpp b/src/SearchAndDDE.cpp
+index fcfa3b74f..28ad1538b 100644
+--- a/src/SearchAndDDE.cpp
++++ b/src/SearchAndDDE.cpp
+@@ -69,26 +69,32 @@ void FindFirst(MainWindow* win) {
+         return;
+     }
+ 
+-    // copy any selected text to the find bar, if it's still empty
+     DisplayModel* dm = win->AsFixed();
+-    // note: used to only copy selection to search edit ctrl
+-    // if search edit was empty
+-    // auto isEditEmpty = Edit_GetTextLength(win->hwndFindEdit) == 0
+-    if (dm->textSelection->result.len > 0) {
++    bool hadFindFocus = HwndIsFocused(win->hwndFindEdit);
++
++    // If focus was in the document (not find bar), copy selected text
++    // and set search position at the selection so FindNext advances from it
++    if (!hadFindFocus && dm->textSelection->result.len > 0) {
+         AutoFreeWStr selection(dm->textSelection->ExtractText(" "));
+         str::NormalizeWSInPlace(selection);
+         if (!str::IsEmpty(selection.Get())) {
+             TempStr s = ToUtf8Temp(selection);
++            AbortFinding(win, false);
++            dm->textSearch->SetLastResult(dm->textSelection);
++            Edit_SetModify(win->hwndFindEdit, FALSE);
+             HwndSetText(win->hwndFindEdit, s);
+-            Edit_SetModify(win->hwndFindEdit, TRUE);
++            // EN_UPDATE from HwndSetText triggers search with wasModified=false,
++            // which uses FindNext() from the selection position
++            Edit_SetModify(win->hwndFindEdit, FALSE);
+         }
+     }
+ 
+     // Don't show a dialog if we don't have to - use the Toolbar instead
+     if (gGlobalPrefs->showToolbar && !win->isFullScreen && !win->presentation) {
+-        if (HwndIsFocused(win->hwndFindEdit)) {
+-            SendMessageW(win->hwndFindEdit, WM_SETFOCUS, 0, 0);
+-        } else {
++        if (hadFindFocus) {
++            // find bar already focused: treat Ctrl+F as "find next"
++            FindTextOnThread(win, TextSearch::Direction::Forward, true);
++        } else if (!HwndIsFocused(win->hwndFindEdit)) {
+             HwndSetFocus(win->hwndFindEdit);
+         }
+         return;
+@@ -570,7 +576,9 @@ bool OnInverseSearch(MainWindow* win, int x, int y) {
+     if (!inverseSearch) {
+         Vec<TextEditor*> editors;
+         DetectTextEditors(editors);
+-        inverseSearch = str::DupTemp(editors[0]->openFileCmd);
++        if (editors.Size() > 0) {
++            inverseSearch = str::DupTemp(editors[0]->openFileCmd);
++        }
+     }
+ 
+     AutoFreeStr cmdLine;
+diff --git a/src/StressTesting.cpp b/src/StressTesting.cpp
+index 9d3be4843..42402c5df 100644
+--- a/src/StressTesting.cpp
++++ b/src/StressTesting.cpp
+@@ -512,6 +512,8 @@ static void Finished(StressTest* st, bool success) {
+         int secs = SecsSinceSystemTime(st->stressStartTime);
+         TempStr tm = FormatTimeTemp(secs);
+         TempStr s = str::FormatTemp("Stress test complete, rendered %d files in %s", st->nFilesProcessed, tm);
++        printf("%s\n", s);
++        fflush(stdout);
+         NotificationCreateArgs args;
+         args.hwndParent = st->win->hwndCanvas;
+         args.msg = s;
+diff --git a/src/SumatraPDF.cpp b/src/SumatraPDF.cpp
+index a9ec929db..a55230201 100644
+--- a/src/SumatraPDF.cpp
++++ b/src/SumatraPDF.cpp
+@@ -611,6 +611,13 @@ static void UpdateWindowRtlLayout(MainWindow* win) {
+     HwndSetRtl(win->hwndFrame, isRTL);
+     EnumChildWindows(win->hwndFrame, SetRtlCallback, (LPARAM)isRTL);
+ 
++    // https://github.com/sumatrapdfreader/sumatrapdf/issues/5326
++    // Rtl reverses mouse positions on x-axis which messes up
++    // identification of elements on page
++    // I could 1. UnmirrorRtl() or 2. make canvas always non-rtl
++    // for now chose 2
++    HwndSetRtl(win->hwndCanvas, false);
++
+     bool tocVisible = win->tocVisible;
+     bool favVisible = gGlobalPrefs->showFavorites;
+     if (tocVisible || favVisible) {
+@@ -1562,6 +1569,7 @@ static MainWindow* CreateMainWindow() {
+     }
+ 
+     gWindows.Append(win);
++    ShowMaybeDelayedNotifications(win->hwndCanvas);
+     // needed for RTL languages
+     UpdateWindowRtlLayout(win);
+     UpdateToolbarSidebarText(win);
+@@ -1944,6 +1952,10 @@ static void LoadDocumentAsyncFinish(LoadDocumentAsyncData* d) {
+     const char* path = args->FilePath();
+     if (!args->ctrl) {
+         ShowErrorLoadingNotification(win, path, args->noSavePrefs);
++        // re-sync win->ctrl with current tab after ShowErrorLoadingNotification
++        // which can pump messages and change tab selection
++        WindowTab* currTab = win->CurrentTab();
++        win->ctrl = currTab ? currTab->ctrl : nullptr;
+         return;
+     }
+     args->activateExisting = false;
+@@ -2014,6 +2026,10 @@ void StartLoadDocument(LoadArgs* argsIn) {
+             RemoveNotification(wndNotif);
+             if (!args->ctrl) {
+                 ShowErrorLoadingNotification(win, path, args->noSavePrefs);
++                // re-sync win->ctrl with current tab after ShowErrorLoadingNotification
++                // which can pump messages and change tab selection
++                WindowTab* currTab = win->CurrentTab();
++                win->ctrl = currTab ? currTab->ctrl : nullptr;
+                 delete args;
+                 return;
+             }
+@@ -2083,6 +2099,10 @@ MainWindow* LoadDocument(LoadArgs* args) {
+ 
+         if (!ctrl) {
+             ShowErrorLoadingNotification(win, path, args->noSavePrefs);
++            // re-sync win->ctrl with current tab after ShowErrorLoadingNotification
++            // which can pump messages and change tab selection
++            WindowTab* currTab = win->CurrentTab();
++            win->ctrl = currTab ? currTab->ctrl : nullptr;
+             return win;
+         }
+     }
+@@ -2457,7 +2477,8 @@ bool SaveAnnotationsToExistingFile(WindowTab* tab) {
+     bool hadEditAnnotations = CloseAndDeleteEditAnnotationsWindow(tab);
+     ReloadDocument(tab->win, false);
+     if (hadEditAnnotations) {
+-        ShowEditAnnotationsWindow(tab);
++        // TODO: improve by remembering which annotation was selected and restoring it after reload
++        ShowEditAnnotationsWindow(tab, nullptr);
+     }
+ 
+     return true;
+@@ -2542,7 +2563,9 @@ bool SaveAnnotationsToMaybeNewPdfFile(WindowTab* tab) {
+ 
+     ShowSavedAnnotationsNotification(win->hwndCanvas, newPath);
+     if (hadEditAnnotations) {
+-        ShowEditAnnotationsWindow(tab);
++        // TODO: improve by remembering which annotation was selected and restoring it after reload
++        // could do it by index
++        ShowEditAnnotationsWindow(tab, nullptr);
+     }
+     return true;
+ }
+@@ -2718,9 +2741,24 @@ void CloseTab(WindowTab* tab, bool quitIfLast) {
+     } else {
+         ReportIf(gPluginMode && !gWindows.Contains(win));
+         RemoveTab(tab);
++        // RemoveTab -> LoadModelIntoTab can pump messages, potentially destroying win
++        // and its cbHandler. Since tab was already removed from win's tab list,
++        // ~MainWindow won't delete it, so we must delete it here.
++        // Null out cb to prevent dangling pointer access in ~DisplayModel.
++        if (!IsMainWindowValid(win)) {
++            if (tab->ctrl) {
++                tab->ctrl->cb = nullptr;
++            }
++            delete tab;
++            return;
++        }
+         delete tab;
+     }
+ 
++    if (!IsMainWindowValid(win)) {
++        return;
++    }
++
+     tabCount = win->TabCount();
+     if (tabCount == 1 && win->GetTab(0)->IsAboutTab()) {
+         // showing only home page tab so remove it
+@@ -4131,6 +4169,10 @@ void EnterFullScreen(MainWindow* win, bool presentation) {
+     HwndSetFocus(win->hwndFrame);
+     // restore gGlobalPrefs->showFavorites changed by SetSidebarVisibility()
+     gGlobalPrefs->showFavorites = showFavoritesTmp;
++
++    if (gGlobalPrefs->preventSleepInFullscreen) {
++        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
++    }
+ }
+ 
+ void ExitFullScreen(MainWindow* win) {
+@@ -4138,6 +4180,10 @@ void ExitFullScreen(MainWindow* win) {
+         return;
+     }
+ 
++    if (gGlobalPrefs->preventSleepInFullscreen) {
++        SetThreadExecutionState(ES_CONTINUOUS);
++    }
++
+     bool wasPresentation = PM_DISABLED != win->presentation;
+     if (wasPresentation) {
+         win->presentation = PM_DISABLED;
+@@ -4279,13 +4325,9 @@ static bool ChmForwardKey(WPARAM key) {
+ 
+ static Annotation* GetAnnotionUnderCursor(WindowTab* tab, Annotation* annot) {
+     DisplayModel* dm = tab->AsFixed();
+-    if (!dm) {
+-        return nullptr;
+-    }
++    if (!dm) return nullptr;
+     Point pt = HwndGetCursorPos(tab->win->hwndCanvas);
+-    if (pt.IsEmpty()) {
+-        return nullptr;
+-    }
++    if (pt.IsEmpty()) return nullptr;
+     int pageNoUnderCursor = dm->GetPageNoByPoint(pt);
+     if (pageNoUnderCursor <= 0) {
+         return nullptr;
+@@ -4314,11 +4356,6 @@ static bool FrameOnKeydown(MainWindow* win, WPARAM key, LPARAM lp) {
+         return true;
+     }
+ #endif
+-    // Handle Ctrl+1..9 for tab switching (these keys do not generate WM_CHAR)
+-    if (isCtrl && win->tabsVisible && (key >= '1' && key <= '9')) {
+-        TabsSelect(win, key < '9' ? (int)(key - '1') : (int)win->TabCount() - 1);
+-        return true;
+-    }
+     if (!win->IsDocLoaded()) {
+         return false;
+     }
+@@ -4387,6 +4424,11 @@ static bool FrameOnKeydown(MainWindow* win, WPARAM key, LPARAM lp) {
+         logf("VK_DIVIDE\n");
+         dm->RotateBy(-90);
+         gIsDivideKeyDown = true;
++    } else if (VK_DELETE == key && !isCtrl && !isShift) {
++        WindowTab* tab = win->CurrentTab();
++        if (tab && tab->selectedAnnotation) {
++            DeleteAnnotationAndUpdateUI(tab, tab->selectedAnnotation);
++        }
+     } else {
+         return false;
+     }
+@@ -4605,8 +4647,6 @@ static void FrameOnChar(MainWindow* win, WPARAM key, LPARAM info = 0) {
+             break;
+     }
+ 
+-    // (Ctrl+1..9 handled in FrameOnKeydown, not here)
+-
+     if (!win->IsDocLoaded()) {
+         return;
+     }
+@@ -4645,6 +4685,11 @@ static void FrameOnChar(MainWindow* win, WPARAM key, LPARAM info = 0) {
+ }
+ 
+ static bool FrameOnSysChar(MainWindow* win, WPARAM key) {
++    // use Alt+1 to Alt+8 for selecting the first 8 tabs and Alt+9 for the last tab
++    if (win->tabsVisible && ('1' <= key && key <= '9')) {
++        TabsSelect(win, key < '9' ? (int)(key - '1') : (int)win->TabCount() - 1);
++        return true;
++    }
+     // Alt + Space opens a sys menu
+     if (key == ' ') {
+         OpenSystemMenu(win);
+@@ -5624,7 +5669,6 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
+ 
+         case CmdScrollDown:
+         case CmdScrollUp: {
+-            // Arrow keys for scrolling, in continuous view scrolls by line in the pdf, otherwise scrolls by page
+             if (!win->IsDocLoaded()) {
+                 return 0;
+             }
+@@ -6092,29 +6136,30 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
+         }
+ 
+         case CmdEditAnnotations: {
+-            if (tab) {
+-                Annotation* annot = GetAnnotionUnderCursor(tab, nullptr);
+-                ShowEditAnnotationsWindow(tab);
+-                if (annot) {
+-                    SetSelectedAnnotation(tab, annot);
+-                }
++            if (!tab) return 0;
++            Annotation* annot = nullptr;
++            Point pt = HwndGetCursorPos(win->hwndCanvas);
++            if (lp != 0) {
++                // when sending from Menu.cpp mouse position is encoded as LPARAM
++                pt.x = GET_X_LPARAM(lp);
++                pt.y = GET_Y_LPARAM(lp);
++                // MapWindowPoints(win->hwndCanvas, HWND_DESKTOP, &pt, 1);
+             }
+-            break;
++            int pageNoUnderCursor = dm->GetPageNoByPoint(pt);
++            if (pageNoUnderCursor > 0) {
++                annot = dm->GetAnnotationAtPos(pt, nullptr);
++            }
++            ShowEditAnnotationsWindow(tab, annot);
++            return 0;
+         }
+ 
+         case CmdDeleteAnnotation: {
+-            if (tab) {
+-                Annotation* annot = tab->selectedAnnotation;
+-                if (!annot) {
+-                    Point pt = HwndGetCursorPos(tab->win->hwndCanvas);
+-                    if (!pt.IsEmpty()) {
+-                        annot = dm->GetAnnotationAtPos(pt, nullptr);
+-                    }
+-                }
+-                if (annot) {
+-                    DeleteAnnotationAndUpdateUI(tab, annot);
+-                }
+-            }
++            if (!tab) return 0;
++            Annotation* annot = tab->selectedAnnotation;
++            if (!annot) annot = GetAnnotionUnderCursor(tab, nullptr);
++            if (!annot) return 0;
++            DeleteAnnotationAndUpdateUI(tab, annot);
++            return 0;
+         } break;
+ 
+         case CmdCreateAnnotHighlight:
+@@ -6207,13 +6252,42 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
+         default:
+             return DefWindowProc(hwnd, msg, wp, lp);
+     }
+-    if (lastCreatedAnnot) {
+-        UpdateAnnotationsList(tab->editAnnotsWindow);
+-        if (openAnnotationEdit && !win->isFullScreen) {
+-            ShowEditAnnotationsWindow(tab);
++    if (!lastCreatedAnnot) {
++        return 0;
++    }
++    UpdateAnnotationsList(tab->editAnnotsWindow);
++
++    EditAnnotFocus focusTarget = EditAnnotFocus::Default;
++    if (GetCommandBoolArg(cmd, kCmdArgFocusEdit, false)) {
++        focusTarget = EditAnnotFocus::Edit;
++    } else if (GetCommandBoolArg(cmd, kCmdArgFocusList, false)) {
++        focusTarget = EditAnnotFocus::List;
++    }
++
++    if (openAnnotationEdit) {
++        ShowEditAnnotationsWindow(tab, lastCreatedAnnot, focusTarget);
++        return 0;
++    }
++
++    // proper action for a given annotation type
++    switch (lastCreatedAnnot->type) {
++        case AnnotationType::Highlight:
++        case AnnotationType::Squiggly:
++        case AnnotationType::StrikeOut:
++        case AnnotationType::Underline: {
++            MainWindowRerender(win);
++            ToolbarUpdateStateForWindow(win, false);
++            return 0;
+         }
+-        SetSelectedAnnotation(tab, lastCreatedAnnot);
++        case AnnotationType::FreeText: {
++            // for FreeText you want to edit text so show edit window
++            ShowEditAnnotationsWindow(tab, lastCreatedAnnot, focusTarget);
++            return 0;
++        } break;
+     }
++
++    // mark as selected so it can be moved / resized
++    SetSelectedAnnotation(tab, lastCreatedAnnot);
+     return 0;
+ }
+ 
+@@ -6501,11 +6575,12 @@ void GetProgramInfo(str::Str& s) {
+     }
+     TempStr signer = GetExecutableSignerTemp(exePath);
+     s.AppendFmt("Signer: %s\r\n", signer ? signer : "(not signed)");
+-    const char* exeType = IsDllBuild() ? "dll" : "static";
+     if (builtOn != nullptr) {
+         s.AppendFmt("BuiltOn: %s\n", builtOn);
+     }
+-    s.AppendFmt("Type: %s\r\n", exeType);
++    const char* exeType = IsDllBuild() ? "dll" : "static";
++    const char* instType = IsRunningInPortableMode() ? "portable" : "installed";
++    s.AppendFmt("ExeType: %s, %s\r\n", exeType, instType);
+     s.AppendFmt("Ver: %s", currentVersion);
+     if (gIsPreReleaseBuild) {
+         s.AppendFmt(" pre-release");
+diff --git a/src/SumatraStartup.cpp b/src/SumatraStartup.cpp
+index a8ff314b9..2030fdd4e 100644
+--- a/src/SumatraStartup.cpp
++++ b/src/SumatraStartup.cpp
+@@ -397,13 +397,6 @@ static bool SetupPluginMode(Flags& i) {
+     return true;
+ }
+ 
+-static void SetupCrashHandler() {
+-    TempStr symDir = GetCrashInfoDirTemp();
+-    TempStr crashDumpPath = path::JoinTemp(symDir, "sumatrapdfcrash.dmp");
+-    TempStr crashFilePath = path::JoinTemp(symDir, "sumatrapdfcrash.txt");
+-    InstallCrashHandler(crashDumpPath, crashFilePath, symDir);
+-}
+-
+ static HWND FindPrevInstWindow(HANDLE* hMutex) {
+     // create a unique identifier for this executable and appdata combination
+     // (allows independent side-by-side installations)
+@@ -1021,10 +1014,10 @@ static EngineBase* CreateEngineFromDataForPreview(const ByteSlice& data, Preview
+                 engine = nullptr;
+             }
+ #else
+-            {
+-                const char* name = (fileType == PreviewFileType::PDF) ? "preview.pdf" : "preview.xps";
+-                engine = CreateEngineMupdfFromStream(stream, name);
+-            }
++        {
++            const char* name = (fileType == PreviewFileType::PDF) ? "preview.pdf" : "preview.xps";
++            engine = CreateEngineMupdfFromStream(stream, name);
++        }
+ #endif
+             break;
+         case PreviewFileType::DjVu:
+@@ -2127,7 +2120,11 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR, _
+     srand((unsigned int)time(nullptr));
+ 
+     if (!gIsAsanBuild) {
+-        SetupCrashHandler();
++        // SetupCrashHandler()
++        TempStr symDir = GetCrashInfoDirTemp();
++        TempStr crashDumpPath = path::JoinTemp(symDir, "sumatrapdfcrash.dmp");
++        TempStr crashFilePath = path::JoinTemp(symDir, "sumatrapdfcrash.txt");
++        InstallCrashHandler(crashDumpPath, crashFilePath, symDir);
+     }
+ 
+     ScopedOle ole;
+@@ -2335,6 +2332,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR, _
+     LoadSettings();
+     UpdateGlobalPrefs(flags);
+     SetCurrentLang(flags.lang ? flags.lang : gGlobalPrefs->uiLanguage);
++    FileWatcherInit();
+ 
+     if (flags.testRenderPage) {
+         TestRenderPage(flags);
+@@ -2655,7 +2653,6 @@ Exit:
+     FreeAcceleratorTables();
+ 
+     FileWatcherWaitForShutdown();
+-    gRenderCache->WaitForShutdown();
+     delete gRenderCache;
+     SaveCallstackLogs();
+     dbghelp::FreeCallstackLogs();
+diff --git a/src/Tabs.cpp b/src/Tabs.cpp
+index 801a915cf..1648752d5 100644
+--- a/src/Tabs.cpp
++++ b/src/Tabs.cpp
+@@ -136,7 +136,11 @@ void RemoveTab(WindowTab* tab) {
+     }
+     win->tabsCtrl->SetSelected(newIdx);
+     tab = win->CurrentTab();
+-    LoadModelIntoTab(tab);
++    // seen in crash report that tab was WindowTab::Type::None
++    // TODO: don't know how it could have happened
++    if (tab && tab->type != WindowTab::Type::None) {
++        LoadModelIntoTab(tab);
++    }
+ #endif
+ }
+ 
+diff --git a/src/TextSearch.cpp b/src/TextSearch.cpp
+index f442e5bed..c82d0512a 100644
+--- a/src/TextSearch.cpp
++++ b/src/TextSearch.cpp
+@@ -136,7 +136,8 @@ void TextSearch::SetLastResult(TextSelection* sel) {
+     SetText(selection);
+ 
+     searchHitStartAt = findPage = std::min(startPage, endPage);
+-    findIndex = (findPage == startPage ? startGlyph : endGlyph) + (int)str::Len(findText);
++    findPage = std::max(startPage, endPage);
++    findIndex = (findPage == endPage ? endGlyph : startGlyph);
+     pageText = textCache->GetTextForPage(findPage);
+     forward = true;
+ }
+diff --git a/src/Theme.cpp b/src/Theme.cpp
+index 607813f07..65204b1d6 100644
+--- a/src/Theme.cpp
++++ b/src/Theme.cpp
+@@ -189,7 +189,7 @@ void CreateThemeCommands() {
+         const char* themeName = theme->name;
+         auto args = NewStringArg(kCmdArgTheme, themeName);
+         cmd = CreateCustomCommand(themeName, CmdSetTheme, args);
+-        cmd->name = str::Format("Set theme '%s'", themeName);
++        cmd->name = str::Format(_TRA("Set theme '%s'"), themeName);
+         if (i == 0) {
+             gFirstSetThemeCmdId = cmd->id;
+         } else if (i == gThemeCount - 1) {
+diff --git a/src/Toolbar.cpp b/src/Toolbar.cpp
+index d2522c5e7..5d125096f 100644
+--- a/src/Toolbar.cpp
++++ b/src/Toolbar.cpp
+@@ -248,7 +248,7 @@ static bool IsCmdEnabled(MainWindow* win, int cmdId) {
+     }
+ }
+ 
+-static TBBUTTON TbButtonFromButtonInfo(const ToolbarButtonInfo& bi) {
++static TBBUTTON TbButtonFromButtonInfo(const ToolbarButtonInfo& bi, bool noTranslate = false) {
+     TBBUTTON b{};
+     b.idCommand = bi.cmdId;
+     if (SkipBuiltInButton(bi)) {
+@@ -266,7 +266,7 @@ static TBBUTTON TbButtonFromButtonInfo(const ToolbarButtonInfo& bi) {
+         b.fsStyle |= BTNS_SHOWTEXT;
+         b.fsStyle |= BTNS_AUTOSIZE;
+     }
+-    auto s = trans::GetTranslation(bi.toolTip);
++    auto s = noTranslate ? bi.toolTip : trans::GetTranslation(bi.toolTip);
+     b.iString = (INT_PTR)ToWStrTemp(s);
+     return b;
+ }
+@@ -1123,7 +1123,7 @@ void CreateToolbar(MainWindow* win) {
+     TBBUTTON* buttons = AllocArrayTemp<TBBUTTON>(gCustomButtonsCount);
+     for (int i = 0; i < gCustomButtonsCount; i++) {
+         ToolbarButtonInfo& tbi = gCustomButtons[i];
+-        buttons[i] = TbButtonFromButtonInfo(tbi);
++        buttons[i] = TbButtonFromButtonInfo(tbi, true);
+     }
+     SendMessageW(hwndToolbar, TB_ADDBUTTONS, gCustomButtonsCount, (LPARAM)buttons);
+     SendMessageW(hwndToolbar, TB_SETBUTTONSIZE, 0, MAKELONG(iconSize, iconSize));
+diff --git a/src/Translations.cpp b/src/Translations.cpp
+index b357d8de6..1ba4a4875 100644
+--- a/src/Translations.cpp
++++ b/src/Translations.cpp
+@@ -126,7 +126,7 @@ static void ParseTranslationsTxt(const StrSpan& d, const char* langCode) {
+     }
+ }
+ 
+-// don't free
++// don't free the result
+ const char* GetTranslation(const char* s) {
+     if (gCurrLangIdx == 0) {
+         // 0 is english, no translation needed
+@@ -146,6 +146,12 @@ const char* GetTranslation(const char* s) {
+                 logf("Didn't find translation for '%s'\n", s);
+                 return s;
+             }
++            // special case of "Change Language"
++            // if we accidentally change language, we want be able to
++            // change it back so add ("Change Language") to translation
++            if (str::ContainsI(s, "Change Language") && !str::ContainsI(tr, "Change Language")) {
++                tr = (char*)str::JoinTemp(tr, " (Change Language)");
++            }
+             return tr;
+         }
+     }
+diff --git a/src/UpdateCheck.cpp b/src/UpdateCheck.cpp
+index dcf043401..14448da88 100644
+--- a/src/UpdateCheck.cpp
++++ b/src/UpdateCheck.cpp
+@@ -532,6 +532,8 @@ static void BuildUpdateURL(str::Str& url, const char* baseURL, UpdateCheck updat
+     if (gIsStoreBuild) {
+         url.Append("&store");
+     }
++    url.Append("&simd=");
++    url.Append(LatestSupportedSIMD());
+     if (UpdateCheck::UserInitiated == updateCheckType) {
+         url.Append("&force");
+     }
+diff --git a/src/testcode/test-app.cpp b/src/testcode/test-app.cpp
+old mode 100644
+new mode 100755
+diff --git a/src/tools/test_util.cpp b/src/tools/test_util.cpp
+index be65c6b1b..a65b75da2 100644
+--- a/src/tools/test_util.cpp
++++ b/src/tools/test_util.cpp
+@@ -30,6 +30,10 @@ extern void WinUtilTest();
+ extern void StrFormatTest();
+ extern void StrVecTest();
+ 
++void MaybeDelayedWarningNotification(const char*, ...) {
++    // a stub to make this compile
++}
++
+ int main(int, char**) {
+     printf("Running unit tests\n");
+ 
+diff --git a/src/uia/DocumentProvider.cpp b/src/uia/DocumentProvider.cpp
+index 999f447cc..167def916 100644
+--- a/src/uia/DocumentProvider.cpp
++++ b/src/uia/DocumentProvider.cpp
+@@ -328,14 +328,14 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationDocumentProvider::GetVisibleRanges(
+     // return all pages' ranges that are even partially visible
+     Vec<SumatraUIAutomationTextRange*> rangeArray;
+     SumatraUIAutomationPageProvider* it = child_first;
+-    while (it && rangeArray.size() > ULONG_MAX) {
++    while (it && rangeArray.size() < (ULONG_MAX / 2)) {
+         if (it->dm->GetPageInfo(it->pageNum) && it->dm->GetPageInfo(it->pageNum)->shown &&
+             it->dm->GetPageInfo(it->pageNum)->visibleRatio > 0.0f) {
+             rangeArray.Append(new SumatraUIAutomationTextRange(this, it->pageNum));
+         }
+         it = it->sibling_next;
+     }
+-    ReportIf(ULONG_MAX == rangeArray.size());
++    ReportIf((ULONG_MAX / 2) == rangeArray.size());
+ 
+     SAFEARRAY* psa = SafeArrayCreateVector(VT_UNKNOWN, 0, (ULONG)rangeArray.size());
+     if (!psa) {
+diff --git a/src/utils/CssParser.cpp b/src/utils/CssParser.cpp
+index bcee284ab..aa7164345 100644
+--- a/src/utils/CssParser.cpp
++++ b/src/utils/CssParser.cpp
+@@ -34,6 +34,9 @@ static bool SkipQuotedString(const char*& s, const char* end) {
+     while (++s < end && *s != quote) {
+         if (*s == '\\') {
+             s++;
++            if (s >= end) {
++                return false;
++            }
+         }
+     }
+     if (s == end) {
+diff --git a/src/utils/Dpi.cpp b/src/utils/Dpi.cpp
+old mode 100644
+new mode 100755
+diff --git a/src/utils/FileUtil.cpp b/src/utils/FileUtil.cpp
+index ee694d22d..1f0a8ed27 100644
+--- a/src/utils/FileUtil.cpp
++++ b/src/utils/FileUtil.cpp
+@@ -891,6 +891,23 @@ bool RemoveAll(const char* dir) {
+     return res == 0;
+ }
+ 
++// Check if the process can create files/directories in the given directory
++// by attempting to create and immediately remove a temporary file.
++bool HasWriteAccess(const char* dir) {
++    if (!dir) {
++        return false;
++    }
++    TempStr path = path::JoinTemp(dir, "__sumatra_write_test__.tmp");
++    WCHAR* pathW = ToWStrTemp(path);
++    HANDLE h = CreateFileW(pathW, GENERIC_WRITE, 0, nullptr, CREATE_NEW,
++                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
++    if (h == INVALID_HANDLE_VALUE) {
++        return false;
++    }
++    CloseHandle(h);
++    return true;
++}
++
+ } // namespace dir
+ 
+ bool FileTimeEq(const FILETIME& a, const FILETIME& b) {
+diff --git a/src/utils/FileWatcher.cpp b/src/utils/FileWatcher.cpp
+index 370d4a66c..044bf5206 100644
+--- a/src/utils/FileWatcher.cpp
++++ b/src/utils/FileWatcher.cpp
+@@ -459,6 +459,10 @@ static void DeleteWatchedFile(WatchedFile* wf) {
+     free(wf);
+ }
+ 
++void FileWatcherInit(void) {
++    InitializeCriticalSection(&gFileWatcherMutex);
++}
++
+ /* Subscribe for notifications about file changes. When a file changes, we'll
+ call observer->OnFileChanged().
+ 
+@@ -481,16 +485,15 @@ WatchedFile* FileWatcherSubscribe(const char* path, const Func0& onFileChangedCb
+         return nullptr;
+     }
+ #endif
++    ScopedCritSec cs(&gFileWatcherMutex);
+     if (!gThreadHandle) {
+         logf("FileWatcherSubscribe: starting a thread\n");
+-        InitializeCriticalSection(&gFileWatcherMutex);
+         gThreadControlHandle = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+ 
+         auto fn = MkFunc0Void(FileWatcherThread);
+         gThreadHandle = StartThread(fn, "FileWatcherThread");
+     }
+ 
+-    ScopedCritSec cs(&gFileWatcherMutex);
+     return NewWatchedFile(path, onFileChangedCb, enableManualCheck);
+ }
+ 
+@@ -515,7 +518,7 @@ static void RemoveWatchedDirIfNotReferenced(WatchedDir* wd) {
+     QueueUserAPC(StopMonitoringDirAPC, gThreadHandle, (ULONG_PTR)wd);
+ }
+ 
+-void FileWatcherWaitForShutdown() {
++void FileWatcherWaitForShutdown(void) {
+     if (!gThreadHandle) {
+         return;
+     }
+diff --git a/src/utils/GeomUtil.cpp b/src/utils/GeomUtil.cpp
+index fd568dd25..a6c4c9d17 100644
+--- a/src/utils/GeomUtil.cpp
++++ b/src/utils/GeomUtil.cpp
+@@ -169,10 +169,10 @@ Rect Rect::Intersect(Rect other) const {
+ 
+ // TODO: check that it's endpoint-exclusive https://devblogs.microsoft.com/oldnewthing/20040218-00/?p=40563
+ Rect Rect::Union(Rect other) const {
+-    if (this->dx <= 0 && this->dy <= 0) {
++    if (this->dx <= 0 || this->dy <= 0) {
+         return other;
+     }
+-    if (other.dx <= 0 && other.dy <= 0) {
++    if (other.dx <= 0 || other.dy <= 0) {
+         return *this;
+     }
+ 
+@@ -342,10 +342,10 @@ RectF RectF::Intersect(RectF other) const {
+ 
+ // TODO: check that it's endpoint-exclusive https://devblogs.microsoft.com/oldnewthing/20040218-00/?p=40563
+ RectF RectF::Union(RectF other) {
+-    if (this->dx <= 0 && this->dy <= 0) {
++    if (this->dx <= 0 || this->dy <= 0) {
+         return other;
+     }
+-    if (other.dx <= 0 && other.dy <= 0) {
++    if (other.dx <= 0 || other.dy <= 0) {
+         return *this;
+     }
+ 
+diff --git a/src/utils/HtmlPullParser.cpp b/src/utils/HtmlPullParser.cpp
+index f0d5b828e..2a5726d45 100644
+--- a/src/utils/HtmlPullParser.cpp
++++ b/src/utils/HtmlPullParser.cpp
+@@ -35,7 +35,7 @@ bool SkipUntil(const char*& s, const char* end, char c) {
+     while ((s < end) && (*s != c)) {
+         ++s;
+     }
+-    return *s == c;
++    return s < end;
+ }
+ 
+ bool SkipUntil(const char*& s, const char* end, const char* term) {
+diff --git a/src/utils/Log.cpp b/src/utils/Log.cpp
+index d944b59b3..fdc4bc814 100644
+--- a/src/utils/Log.cpp
++++ b/src/utils/Log.cpp
+@@ -260,6 +260,7 @@ void StartLogToFile(const char* path, bool removeIfExists) {
+ }
+ 
+ bool WriteCurrentLogToFile(const char* path) {
++    if (!gLogBuf) return false;
+     ByteSlice slice = gLogBuf->AsByteSlice();
+     if (slice.empty()) {
+         return false;
+diff --git a/src/utils/SquareTreeParser.cpp b/src/utils/SquareTreeParser.cpp
+index 26484fa22..acc146965 100644
+--- a/src/utils/SquareTreeParser.cpp
++++ b/src/utils/SquareTreeParser.cpp
+@@ -208,7 +208,7 @@ static SquareTreeNode* ParseSquareTreeRec(char*& data, bool isTopLevel = false)
+ }
+ 
+ SquareTreeNode* ParseSquareTree(const char* s) {
+-    char* data = strconv::UnknownToUtf8Temp(s);
++    TempStr data = strconv::UnknownToUtf8Temp(s);
+     if (!data) {
+         return nullptr;
+     }
+diff --git a/src/utils/StrUtil.cpp b/src/utils/StrUtil.cpp
+index 27b5a47b9..660b20310 100644
+--- a/src/utils/StrUtil.cpp
++++ b/src/utils/StrUtil.cpp
+@@ -2009,7 +2009,7 @@ bool IsNonCharacter(WCHAR c) {
+ 
+ // hack: to fool CodeQL which doesn't approve of char* => WCHAR* casts
+ // and doesn't allow any way to disable that warning
+-WCHAR* ToWCHAR(const char* s) {
++WCHAR* CastToWCHAR(const char* s) {
+     void* d = (void*)s;
+     return (WCHAR*)d;
+ }
+diff --git a/src/utils/StrconvUtil.cpp b/src/utils/StrconvUtil.cpp
+index e655a0159..6244ab4b1 100644
+--- a/src/utils/StrconvUtil.cpp
++++ b/src/utils/StrconvUtil.cpp
+@@ -131,7 +131,7 @@ TempStr StrToUtf8Temp(const char* src, uint codePage) {
+ // tries to convert a string in unknown encoding to utf8, as best
+ // as it can
+ // caller has to free() it
+-char* UnknownToUtf8Temp(const char* s) {
++TempStr UnknownToUtf8Temp(const char* s) {
+     size_t len = str::Len(s);
+ 
+     if (len < 3) {
+@@ -153,14 +153,15 @@ char* UnknownToUtf8Temp(const char* s) {
+     if (str::StartsWith(s, UTF16BE_BOM)) {
+         // convert from utf16 big endian to utf16
+         s += 2;
+-        WCHAR* ws = str::ToWCHAR(s);
++        WCHAR* ws = (WCHAR*)s;
+         int n = str::Leni(ws);
+-        char* tmp = (char*)s;
++        WCHAR* tmpW = str::DupTemp(ws, n + 1);
++        char* tmp = (char*)tmpW;
+         for (int i = 0; i < n; i++) {
+             int idx = i * 2;
+             std::swap(tmp[idx], tmp[idx + 1]);
+         }
+-        return ToUtf8Temp(ws);
++        return ToUtf8Temp((WCHAR*)tmp);
+     }
+ 
+     // if s is valid utf8, leave it alone
+diff --git a/src/utils/WinDynCalls.cpp b/src/utils/WinDynCalls.cpp
+old mode 100644
+new mode 100755
+diff --git a/src/utils/WinUtil.cpp b/src/utils/WinUtil.cpp
+old mode 100644
+new mode 100755
+index 2dd6c7fe0..0095648e1
+--- a/src/utils/WinUtil.cpp
++++ b/src/utils/WinUtil.cpp
+@@ -1093,6 +1093,47 @@ bool IsProcessRunningElevated() {
+     return tobool(isAdmin);
+ }
+ 
++// returns the exe path of the parent process, or nullptr on failure
++// if pidOut is not nullptr, it receives the parent process ID
++TempStr GetParentProcessPath(DWORD* pidOut) {
++    if (pidOut) {
++        *pidOut = 0;
++    }
++    DWORD pid = GetCurrentProcessId();
++    AutoCloseHandle snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
++    if (INVALID_HANDLE_VALUE == snap) {
++        return nullptr;
++    }
++    PROCESSENTRY32W pe{};
++    pe.dwSize = sizeof(pe);
++    DWORD parentPid = 0;
++    if (!Process32FirstW(snap, &pe)) {
++        return nullptr;
++    }
++    do {
++        if (pe.th32ProcessID == pid) {
++            parentPid = pe.th32ParentProcessID;
++            break;
++        }
++    } while (Process32NextW(snap, &pe));
++    if (parentPid == 0) {
++        return nullptr;
++    }
++    if (pidOut) {
++        *pidOut = parentPid;
++    }
++    AutoCloseHandle hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, parentPid);
++    if (!hProc.IsValid()) {
++        return nullptr;
++    }
++    WCHAR path[MAX_PATH]{};
++    DWORD pathLen = MAX_PATH;
++    if (!QueryFullProcessImageNameW(hProc, 0, path, &pathLen)) {
++        return nullptr;
++    }
++    return ToUtf8Temp(path);
++}
++
+ // We assume that if OpenProcess() works, we are at the same or greater
+ // elevation level
+ // I tried to run IsProcessRunningElevated() on 2 processes but this didn't
+@@ -3146,11 +3187,25 @@ int MsgBox(HWND hwnd, const char* text, const char* caption, UINT flags) {
+     return MessageBoxW(hwnd, textW, captionW, flags);
+ }
+ 
+-// https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex?view=msvc-170
+ u32 CpuID() {
+ #if IS_ARM_64
+-    return 0;
++    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
++    u32 res = 0;
++    if (IsProcessorFeaturePresent(PF_ARM_NEON_INSTRUCTIONS_AVAILABLE)) {
++        res |= kCpuNEON;
++    }
++    if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE)) {
++        res |= kCpuArmCrypto;
++    }
++    if (IsProcessorFeaturePresent(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE)) {
++        res |= kCpuArmAtomics;
++    }
++    if (IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)) {
++        res |= kCpuArmDotProd;
++    }
++    return res;
+ #else
++    // https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex?view=msvc-170
+     std::bitset<32> f_1_ECX_;
+     std::bitset<32> f_1_EDX_;
+     std::bitset<32> f_7_EBX_;
+@@ -3202,6 +3257,40 @@ u32 CpuID() {
+ #endif
+ }
+ 
++const char* LatestSupportedSIMD() {
++    u32 id = CpuID();
++    // x86/x64
++    if (id & kCpuAVX2) {
++        return "avx2";
++    }
++    if (id & kCpuAVX) {
++        return "avx";
++    }
++    if (id & kCpuSSE42) {
++        return "sse42";
++    }
++    if (id & kCpuSSE41) {
++        return "sse41";
++    }
++    if (id & kCpuSSE3) {
++        return "sse3";
++    }
++    if (id & kCpuSSE2) {
++        return "sse2";
++    }
++    if (id & kCpuSSE) {
++        return "sse";
++    }
++    // ARM
++    if (id & kCpuArmDotProd) {
++        return "dotprod";
++    }
++    if (id & kCpuNEON) {
++        return "neon";
++    }
++    return "none";
++}
++
+ LARGE_INTEGER TimeNow() {
+     LARGE_INTEGER now;
+     QueryPerformanceCounter(&now);
+diff --git a/src/wingui/FrameRateWnd.cpp b/src/wingui/FrameRateWnd.cpp
+old mode 100644
+new mode 100755
+diff --git a/tools/efi/main.cpp b/tools/efi/main.cpp
+old mode 100644
+new mode 100755
