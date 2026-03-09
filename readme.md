@@ -7,6 +7,16 @@ I have made the following changes in diversion to the original projects:
 * Control+numbers are now shortcuts to change tabs. Previously it was for zoooming commands. Zooming commands are instead using alt+number shortcuts
 * Reduce horizonal scroll sensitivity (hardcoded)
 
+TODO:
+* Smooth scroll for mouse scroll wheel and arrow keys by a exponanicaly decay functinon
+* Add middle button down to pan around just like on Fusion 360
+* 
+
+Persistance problems:
+* When open two windows, the first window doesn't save states when sumatraPDF is closed
+* Window multiple line scroll setting lead to the app crashing when open.
+* Tabs drag and drop in the tab's bar doesn't provide enough feedback. This was updated in the sumatraPDF main branch after I forked from the main branch.
+
 
 [![Build](https://github.com/sumatrapdfreader/sumatrapdf/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/sumatrapdfreader/sumatrapdf/actions/workflows/build.yml)
 ## SumatraPDF Reader
@@ -19,4 +29,5 @@ More Information:
 * [Website](https://www.sumatrapdfreader.org/free-pdf-reader)
 * [Manual](https://www.sumatrapdfreader.org/manual)
 * [Developer Information](https://www.sumatrapdfreader.org/docs/Contribute-to-SumatraPDF)
+
 
