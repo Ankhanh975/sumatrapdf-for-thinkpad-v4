@@ -6,11 +6,10 @@ I have made the following changes in diversion to the original projects:
 * Change background color (hardcoded)
 * Control+numbers are now shortcuts to change tabs. Previously it was for zoooming commands. Zooming commands are instead using alt+number shortcuts
 * Reduce horizonal scroll sensitivity (hardcoded)
+* Add middle button down to pan around just like on Fusion 360
 
 TODO:
 * Smooth scroll for mouse scroll wheel and arrow keys by a exponanicaly decay functinon
-* Add middle button down to pan around just like on Fusion 360
-* 
 
 Persistance problems:
 * When open two windows, the first window doesn't save states when sumatraPDF is closed

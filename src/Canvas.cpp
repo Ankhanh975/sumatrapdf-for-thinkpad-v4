@@ -252,10 +252,10 @@ static void OnHScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
             si.nPos = si.nMax;
             break;
         case SB_LINELEFT:
-            si.nPos -= DpiScale(win->hwndCanvas, 16) * lp / 128 * 3.0;
+            si.nPos -= DpiScale(win->hwndCanvas, 16) * lp * 3.0 / 256 ;
             break;
         case SB_LINERIGHT:
-            si.nPos += DpiScale(win->hwndCanvas, 16) * lp / 128 * 3.0;
+            si.nPos += DpiScale(win->hwndCanvas, 16) * lp * 3.0 / 256 ;
             break;
         case SB_PAGELEFT:
             si.nPos -= si.nPage;
@@ -1769,7 +1769,24 @@ static LRESULT CanvasOnMouseWheel(MainWindow* win, UINT msg, WPARAM wp, LPARAM l
         int leftover = gSmoothScrollRemainder % gDeltaPerLine;
         WPARAM scrollWp = (gSmoothScrollRemainder > 0) ? (hScroll ? SB_LINELEFT : SB_LINEUP) : (hScroll ? SB_LINERIGHT : SB_LINEDOWN);
         if (steps != 0) {
-            SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, abs(steps)); 
+            if (hScroll) {
+                gHScrollCount++;
+                    if (gHScrollCount % 2 == 0) {
+                        DisplayModel* dm = win->AsFixed();
+                        if (dm) {
+                            int scrollBy = (int)(DpiScale(win->hwndCanvas, 16) * abs(steps) * 3.0 / 256);
+                            int pos = dm->yOffset();
+                            if (steps > 0) {
+                                pos -= scrollBy;
+                            } else {
+                                pos += scrollBy;
+                            }
+                            dm->ScrollYTo(pos);
+                        }
+                    }
+            } else {
+                SendMessageW(win->hwndCanvas, scrollMsg, scrollWp, abs(steps));
+            }
         }
         win->wheelAccumDelta = leftover;
         gSmoothScrollRemainder = leftover;
@@ -2103,7 +2120,7 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
 
         case WM_HSCROLL:
             gHScrollCount++;
-            if (gHScrollCount % 4 == 0) {
+            if (gHScrollCount % 3 == 0) {
                 OnHScroll(win, wp, lp);
             }
             return 0;
