@@ -85,11 +85,6 @@ constexpr int kResizeHandleSize = 8;
 // Therefore, a higher factor makes smooth scrolling faster.
 static const double gSmoothScrollingFactor = 0.7;
 
-// Timer ID for smooth scroll animation
-#define SMOOTHSCROLL_TIMER_ID_2 0x1234
-// Delay in ms between smooth scroll animation steps
-#define SMOOTHSCROLL_DELAY_IN_MS_2 12
-
 // Accumulated sub-line delta for smooth scrolling
 static int gSmoothScrollRemainder = 0;
 
@@ -97,6 +92,9 @@ static int gSmoothScrollRemainder = 0;
 static int gDeltaPerLine = 0;
 // set when WM_MOUSEWHEEL has been passed on (to prevent recursion)
 static bool gWheelMsgRedirect = false;
+
+// count WM_HSCROLL messages so we only handle every other one
+static int gHScrollCount = 0;
 
 void UpdateDeltaPerLine() {
     ULONG ulScrollLines;
@@ -173,7 +171,7 @@ static void OnVScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
     }
 
     if (lp == 0) {
-        lp = 42; // default line height in case we can't get it from the system
+        lp = 96; // default line height in case we can't get it from the system
     }
     // Original logic for other display modes
     float lineHeightF = DpiScale(win->hwndCanvas, 16) * ((float) lp) / 32;
@@ -243,7 +241,7 @@ static void OnHScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
 
     int currPos = si.nPos;
     if (lp == 0) {
-        lp = 16; // default line width in case we can't get it from the system
+        lp = 32; // default line width in case we can't get it from the system
     }
     USHORT msg = LOWORD(wp);
     switch (msg) {
@@ -254,10 +252,10 @@ static void OnHScroll(MainWindow* win, WPARAM wp, LPARAM lp) {
             si.nPos = si.nMax;
             break;
         case SB_LINELEFT:
-            si.nPos -= DpiScale(win->hwndCanvas, 16) * lp / 128;
+            si.nPos -= DpiScale(win->hwndCanvas, 16) * lp / 128 * 3.0;
             break;
         case SB_LINERIGHT:
-            si.nPos += DpiScale(win->hwndCanvas, 16) * lp / 128;
+            si.nPos += DpiScale(win->hwndCanvas, 16) * lp / 128 * 3.0;
             break;
         case SB_PAGELEFT:
             si.nPos -= si.nPage;
@@ -763,7 +761,7 @@ static void OnMouseLeftButtonDown(MainWindow* win, int x, int y, WPARAM key) {
     bool isCtrl = IsCtrlPressed();
     bool canCopy = HasPermission(Perm::CopySelection);
     bool isOverText = win->AsFixed()->IsOverText(pt);
-    if (resizeHandle != ResizeHandle::None || isMoveableAnnot || !canCopy || (isShift || !isOverText) && !isCtrl) {
+    if (resizeHandle != ResizeHandle::None || isMoveableAnnot) {
         StartMouseDrag(win, x, y);
     } else {
         OnSelectionStart(win, x, y, key);
@@ -945,34 +943,27 @@ static void OnMouseLeftButtonDblClk(MainWindow* win, int x, int y, WPARAM key) {
 }
 
 static void OnMouseMiddleButtonDown(MainWindow* win, int x, int y, WPARAM) {
-    // Handle message by recording placement then moving document as mouse moves.
-
-    switch (win->mouseAction) {
-        case MouseAction::None:
-            win->mouseAction = MouseAction::Scrolling;
-
-            win->dragStartPending = true;
-            // record current mouse position, the farther the mouse is moved
-            // from this position, the faster we scroll the document
-            win->dragStart = Point(x, y);
-            SetCursorCached(IDC_SIZEALL);
-            break;
-
-        case MouseAction::Scrolling:
-            win->mouseAction = MouseAction::None;
-            break;
+    if (MouseAction::Scrolling == win->mouseAction) {
+        win->mouseAction = MouseAction::None;
+    } else if (win->mouseAction != MouseAction::None) {
+        return;
     }
+
+    HwndSetFocus(win->hwndFrame);
+    win->dragStartPending = true;
+    win->dragStart = Point(x, y);
+    StartMouseDrag(win, x, y);
 }
 
 static void OnMouseMiddleButtonUp(MainWindow* win, int x, int y, WPARAM) {
-    switch (win->mouseAction) {
-        case MouseAction::Scrolling:
-            if (!win->dragStartPending) {
-                win->mouseAction = MouseAction::None;
-                SetCursorCached(IDC_ARROW);
-                break;
-            }
+    if (MouseAction::Dragging != win->mouseAction || IsRightDragging(win)) {
+        return;
     }
+
+    int isDragXOrY = IsDragDistance(x, win->dragStart.x, y, win->dragStart.y);
+    bool didDragMouse = !win->dragStartPending || isDragXOrY;
+    StopMouseDrag(win, x, y, !didDragMouse);
+    win->mouseAction = MouseAction::None;
 }
 
 static void OnMouseRightButtonDown(MainWindow* win, int x, int y) {
@@ -2087,8 +2078,6 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
             return 0;
 
         case WM_MBUTTONDOWN:
-            SetTimer(hwnd, SMOOTHSCROLL_TIMER_ID_2, SMOOTHSCROLL_DELAY_IN_MS_2, nullptr);
-            // TODO: Create window that shows location of initial click for reference
             OnMouseMiddleButtonDown(win, x, y, wp);
             return 0;
 
@@ -2113,7 +2102,10 @@ static LRESULT WndProcCanvasFixedPageUI(MainWindow* win, HWND hwnd, UINT msg, WP
             return 0;
 
         case WM_HSCROLL:
-            OnHScroll(win, wp, lp);
+            gHScrollCount++;
+            if (gHScrollCount % 4 == 0) {
+                OnHScroll(win, wp, lp);
+            }
             return 0;
 
         case WM_MOUSEWHEEL:
