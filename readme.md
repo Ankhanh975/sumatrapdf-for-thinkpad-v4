@@ -1,7 +1,7 @@
 Note: this project is a fork of sumatrapdf project on github. I modified the reader to suit my reading needs. I forked this project on Febuary 15th. 
 
 I have made the following changes in diversion to the original projects:
-* Revert smart alt+tab menu control. It now just the familiar alt+tab
+* Revert smart crtl+tab menu control. It now just the familiar ctrl+tab
 * Make scrolling on touchpad sample the events at 60 fps instead of 5 fps like the orginal
 * Change background color (hardcoded)
 * Control+numbers are now shortcuts to change tabs. Previously it was for zoooming commands. Zooming commands are instead using alt+number shortcuts
@@ -10,6 +10,7 @@ I have made the following changes in diversion to the original projects:
 
 TODO:
 * Smooth scroll for mouse scroll wheel and arrow keys by a exponanicaly decay functinon
+* When holding alt, increase scrolling sensitivity
 
 Persistance problems:
 * When open two windows, the first window doesn't save states when sumatraPDF is closed
