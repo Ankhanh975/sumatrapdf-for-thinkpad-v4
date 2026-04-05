@@ -29,5 +29,6 @@ More Information:
 * [Website](https://www.sumatrapdfreader.org/free-pdf-reader)
 * [Manual](https://www.sumatrapdfreader.org/manual)
 * [Developer Information](https://www.sumatrapdfreader.org/docs/Contribute-to-SumatraPDF)
+* [Architecture & Engine Documentation](docs/architecture.md)
 
 
