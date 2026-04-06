@@ -26,6 +26,7 @@ void OnWindowContextMenu(MainWindow* win, int x, int y);
 void OnAboutContextMenu(MainWindow* win, int x, int y);
 int CmdIdFromVirtualZoom(float virtualZoom);
 void UpdateAppMenu(MainWindow* win, HMENU m);
+void MenuUpdateDisplayMode(MainWindow* win);
 void ToggleMenuBar(MainWindow* win, bool showTemporarily);
 float ZoomMenuItemToZoom(int menuItemId);
 std::pair<bool, bool> GetCommandIdState(BuildMenuCtx* ctx, int cmdId);

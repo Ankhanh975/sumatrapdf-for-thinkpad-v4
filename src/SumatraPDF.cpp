@@ -6029,6 +6029,8 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
             gGlobalPrefs->fixedPageUI.invertColors ^= true;
             UpdateDocumentColors();
             UpdateControlsColors(win);
+            SetToolbarButtonCheckedState(win, CmdInvertColors, gGlobalPrefs->fixedPageUI.invertColors);
+            MenuUpdateDisplayMode(win);
             // UpdateUiForCurrentTab(win);
             SaveSettings();
             break;
