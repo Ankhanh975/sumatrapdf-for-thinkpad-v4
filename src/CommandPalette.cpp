@@ -486,7 +486,7 @@ static const char* UpdateCommandNameTemp(MainWindow* win, int cmdId, const char*
         } break;
         case CmdInvertColors: {
             isToggle = true;
-            newIsOn = !gGlobalPrefs->fixedPageUI.invertColors;
+            newIsOn = gGlobalPrefs->fixedPageUI.invertColors;
         } break;
         case CmdToggleZoom: {
             // TODO: this toggles via different values
