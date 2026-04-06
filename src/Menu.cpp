@@ -280,6 +280,14 @@ static MenuDef menuDefView[] = {
         CmdToggleScrollbars,
     },
     {
+        kMenuSeparator,
+        0,
+    },
+    {
+        _TRN("&Dark Mode"),
+        CmdInvertColors,
+    },
+    {
         nullptr,
         0,
     },
@@ -1614,6 +1622,7 @@ void MenuUpdateDisplayMode(MainWindow* win) {
 
     CheckMenuRadioItem(win->menu, CmdViewLayoutFirst, CmdViewLayoutLast, id, MF_BYCOMMAND);
     MenuSetChecked(win->menu, CmdToggleContinuousView, IsContinuous(displayMode));
+    MenuSetChecked(win->menu, CmdInvertColors, gGlobalPrefs->fixedPageUI.invertColors);
 
     if (win->CurrentTab() && win->CurrentTab()->GetEngineType() == kindEngineComicBooks) {
         bool mangaMode = win->AsFixed()->GetDisplayR2L();

@@ -76,6 +76,8 @@ static ToolbarButtonInfo gToolbarButtons[] = {
     {TbIcon::LayoutSinglePage, CmdZoomFitPageAndSinglePage, _TRN("Fit a Single Page")},
     {TbIcon::RotateLeft, CmdRotateLeft, _TRN("Rotate &Left")},
     {TbIcon::RotateRight, CmdRotateRight, _TRN("Rotate &Right")},
+    {TbIcon::None, 0, nullptr}, // separator
+    {TbIcon::DarkMode, CmdInvertColors, _TRN("Dark Mode")},
     {TbIcon::ZoomOut, CmdZoomOut, _TRN("Zoom Out")},
     {TbIcon::ZoomIn, CmdZoomIn, _TRN("Zoom In")},
     {TbIcon::None, CmdFindFirst, nullptr},
@@ -650,6 +652,7 @@ void UpdateToolbarState(MainWindow* win) {
             win->CurrentTab()->prevZoomVirtual = kInvalidZoom;
         }
     }
+    SetToolbarButtonCheckedState(win, CmdInvertColors, gGlobalPrefs->fixedPageUI.invertColors);
 }
 
 static void CreateFindBox(MainWindow* win, HFONT hfont, int iconDy) {
